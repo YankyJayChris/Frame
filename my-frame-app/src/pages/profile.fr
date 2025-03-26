@@ -1,0 +1,30 @@
+fn: update:(value:string) => {
+  if: value === "test" {
+    return result = "matched"
+  }
+  for: items as item {
+    call: log:(item)
+  }
+  switch: mode {
+    case: "top"
+      call: setTop:()
+  }
+}
+
+page: {
+  name: "Profile"
+  route: "/profile"
+  styles: { direction: "column" }
+  children: [
+    input: { value: "Enter text" on_change: "update:($value)" }
+    dropdown: { options: ["Option 1", "Option 2"] on_select: 0 }
+    form: {
+      validation: "required"
+      on_submit: "submitForm:()"
+      children: [
+        input: { value: "Name" on_change: "updateName:($value)" }
+        button: { content: "Submit" on_click: "submit:()" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+WHITESPACE = _{ " " | "\n" | "\t" }
+COMMENT = _{ "//" ~ ANY* ~ NEWLINE }
+
+ident = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+string = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+number = { ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+unit = { "dp" | "%" | "px" }
+var = { "$" ~ ident }
+
+// Function definition with control flow
+fn_def = { "fn" ~ ident ~ ":" ~ ("async")? ~ "(" ~ (ident ~ ":" ~ ident ~ ",")* ~ (ident ~ ":" ~ ident)? ~ ")" ~ "=>" ~ "{" ~ expr* ~ "}" }
+expr = { 
+    "return" ~ ident ~ "=" ~ (call | ident | number | string) | 
+    call | 
+    (ident ~ ("+" | "-") ~ ident) | 
+    if_stmt | 
+    for_stmt | 
+    switch_stmt 
+}
+if_stmt = { "if:" ~ ident ~ "===" ~ ident ~ "{" ~ expr* ~ "}" }
+for_stmt = { "for:" ~ ident ~ "as" ~ ident ~ "{" ~ expr* ~ "}" }
+switch_stmt = { "switch:" ~ ident ~ "{" ~ (case_stmt)* ~ "}" }
+case_stmt = { "case:" ~ string ~ expr* }
+call = { ("wait:")? ~ ident ~ ":(" ~ (arg ~ ",")* ~ arg? ~ ")" }
+arg = { string | number | "{" ~ (ident ~ ":" ~ string ~ ",")* ~ (ident ~ ":" ~ string)? ~ "}" }
+
+// Page and component definitions
+page = { "page:" ~ "{" ~ "name:" ~ string ~ "route:" ~ string ~ "styles:" ~ styles ~ "children:" ~ "[" ~ component* ~ "]" ~ "}" }
+component = { 
+    ident ~ ":" ~ "{" ~ 
+        ("styles:" ~ styles)? ~ 
+        ("content:" ~ (var | string | component))? ~ 
+        ("children:" ~ "[" ~ component* ~ "]")? ~ 
+        ("on_click:" ~ call)? ~ 
+        ("data:" ~ ident)? ~ 
+        ("build:" ~ "(" ~ ident ~ ")" ~ "=>" ~ "{" ~ component ~ "}")? ~ 
+        ("direction:" ~ string)? ~ 
+        ("scroll:" ~ string)? ~ 
+        ("current:" ~ number)? ~ 
+        ("items:" ~ "[" ~ item* ~ "]")? ~ 
+        ("menu:" ~ "{" ~ "icon:" ~ "{" ~ "icon:" ~ string ~ "on_click:" ~ call ~ "}" ~ "}")? ~ 
+        ("actions:" ~ "[" ~ component* ~ "]")? ~ 
+        ("src:" ~ string)? ~
+        ("value:" ~ string)? ~
+        ("options:" ~ "[" ~ string* ~ "]")? ~
+        ("on_change:" ~ call)? ~
+        ("on_select:" ~ number)? ~
+        ("on_submit:" ~ call)? ~
+        ("validation:" ~ string)? ~
+    "}" 
+}
+item = { 
+    "item:" ~ "{" ~ 
+        "content:" ~ string ~ 
+        "icon:" ~ string ~ 
+        "on_click:" ~ call ~ 
+        "styles:" ~ styles ~
+    "}" 
+}
+styles = { "{" ~ (ident ~ ":" ~ (number ~ unit? | string) ~ ";")* ~ "}" }
+
+// Test syntax (Jest-like)
+test_file = { (test_suite | fn_def)* }
+test_suite = { "describe:" ~ string ~ "=>" ~ "{" ~ test_case* ~ "}" }
+test_case = { "it:" ~ string ~ "=>" ~ "{" ~ assertion* ~ "}" }
+assertion = { "expect:" ~ ident ~ "." ~ ident ~ ":(" ~ (string | number) ~ ")" }

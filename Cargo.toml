@@ -1,0 +1,33 @@
+[package]
+name = "frame-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pest = "2.7"                # Parsing .fr files
+pest_derive = "2.7"
+wgpu = "0.19"              # Cross-platform canvas rendering
+winit = "0.29"             # Windowing
+serde = { version = "1.0", features = ["derive"] }  # Serialization
+serde_json = "1.0"         # JSON handling
+tokio = { version = "1.0", features = ["full"] }    # Async runtime
+reqwest = { version = "0.11", features = ["json"] } # HTTP client
+image = "0.24"             # Image processing
+rusttype = "0.9"           # Font rendering
+resvg = "0.35"             # SVG rendering
+rusqlite = "0.31"          # State persistence
+git2 = "0.18"              # Git integration
+websocket = "0.27"         # Hot reload server
+flate2 = "1.0"             # Asset compression
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"               # Android native plugins
+[target.'cfg(target_os = "ios")'.dependencies]
+objc = "0.2"               # iOS native plugins
+
+[lib]
+name = "frame_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "frame"
+path = "src/main.rs"

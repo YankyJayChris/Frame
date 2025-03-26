@@ -1,0 +1,107 @@
+// blog-app/pages/profile.fr
+// Profile page with mobile widgets.
+
+import { AppBar } "frame-core" // this how we will import frame work components
+import { Card } "./component/Card.fr" // this is a custom created component
+
+// this is how function can look like
+fn refreshPosts: async () => { 
+  retun posts = wait:fetch("https://jsonplaceholder.typicode.com/posts", {method: "GET"});
+}
+
+fn calculate: (var1:int, var2:int) => {
+  var1 + var2
+}
+
+const var = "john deo" // this i variable
+
+page: { 
+  name: "Profile" 
+  route: "/profile" 
+  styles: { width: 100% height: 100% } 
+  children: [
+    app_bar: { 
+      menu: { icon: { icon: "settings" on_click: calculate:(2, 2)  } } 
+      title: "Profile" 
+      styles: { width: 100% height: 50dp }
+      actions: [
+        button: { icon: "search" on_click: ()=>{}  },
+        button: { icon: "settings" on_click: ()=>{}  },
+      ]
+    }
+    row: {
+      styles: { width: 100% height: 50dp }
+      children: [
+        container: {
+          styles: { width: 20dp height: 20dp }
+          content: column:{
+            styles: { width: 100% height: 100% }
+            children: [
+              icon: {content: "list" }
+              text: { content: "My post" },
+            ]
+          }
+        }
+        container: {
+          styles: { width: 20dp height: 20dp }
+          content: column:{
+            styles: { width: 100% height: 100% }
+            children: [
+              icon: {content: "add" }
+              text: { content: "create" },
+            ]
+          }
+        }
+      ]
+    }
+    image: { 
+      src: "profile.png" 
+      styles: { width: 100dp height: 100dp x: 10dp y: 60dp } 
+    }
+    text: { 
+      content: $var 
+      styles: { x: 10dp y: 170dp } 
+    }
+    button: { 
+      content: "User Profile" 
+      styles: { x: 10dp y: 170dp } 
+      on_click: refreshPosts:()
+    }
+    list: { 
+      direction: "column" 
+      scroll: "vertical"
+      data: posts 
+      styles: { width: 100% height: 100% } 
+      build:(post) => { 
+        container: {
+          styles: { width: 100% height: 150dp }
+          child: Card:(post)
+        } 
+      }
+    }
+    bottom_navigation_bar: { 
+      current: 1
+      items: [
+        item: { 
+          on_click: navigate("home")
+          styles: { width: 20px height: 20px }
+          content: "Home"
+          icon: "home"
+        }
+        item: { 
+          on_click: navigate("home")
+          styles: { width: 20px height: 20px }
+          content: "services"
+          icon: "services"
+        }
+        item: { 
+          on_click: navigate("home")
+          styles: { width: 20px height: 20px }
+          content: "profile"
+          icon: "profile"
+        }
+      ] 
+    }
+  ]
+}
+
