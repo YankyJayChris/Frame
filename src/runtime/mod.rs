@@ -1,3 +1,4 @@
+// frame/src/runtime/mod.rs
 mod canvas;
 mod plugins;
 mod state;
@@ -13,6 +14,8 @@ pub use animation::Animation;
 use std::collections::HashMap;
 use rusqlite::Connection;
 use tokio::sync::mpsc;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub trait Component {
     fn render(&self, canvas: &mut Canvas, styles: &Styles, animations: &mut Vec<Animation>);
@@ -21,6 +24,10 @@ pub trait Component {
     fn unmount(&self) {}
     fn children(&self) -> Option<&Vec<Rc<RefCell<Box<dyn Component>>>>> { None }
     fn on_click(&self) -> Option<&String> { None }
+    fn on_touch_start(&self) -> Option<&String> { None }   // New
+    fn on_touch_move(&self) -> Option<&String> { None }    // New
+    fn on_touch_end(&self) -> Option<&String> { None }     // New
+    fn on_touch_cancel(&self) -> Option<&String> { None }  // New
     fn styles(&self) -> Styles;
 }
 
@@ -48,8 +55,8 @@ impl Styles {
 pub struct Animation {
     pub kind: String,
     pub duration: u32, // in milliseconds
-    pub from: Styles,  // Restored
-    pub to: Styles,    // Restored
+    pub from: Styles,
+    pub to: Styles,
 }
 
 impl Animation {

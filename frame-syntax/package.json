@@ -1,0 +1,25 @@
+{
+  "name": "frame-syntax",
+  "displayName": "Frame Syntax",
+  "description": "Syntax highlighting for Frame .fr files",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "frame",
+      "aliases": ["Frame", "frame"],
+      "extensions": [".fr"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "frame",
+      "scopeName": "source.frame",
+      "path": "./syntaxes/frame.tmLanguage.json"
+    }]
+  }
+}

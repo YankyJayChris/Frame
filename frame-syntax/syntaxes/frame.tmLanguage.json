@@ -1,0 +1,247 @@
+{
+	"name": "Frame",
+	"scopeName": "source.frame",
+	"fileTypes": [
+		".fr"
+	],
+	"patterns": [
+		{
+			"include": "#comments"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#variables"
+		},
+		{
+			"include": "#functions"
+		},
+		{
+			"include": "#components"
+		},
+		{
+			"include": "#pages"
+		},
+		{
+			"include": "#imports"
+		},
+		{
+			"include": "#i18n"
+		},
+		{
+			"include": "#styles"
+		},
+		{
+			"include": "#numbers"
+		}
+	],
+	"repository": {
+		"comments": {
+			"patterns": [
+				{
+					"name": "comment.line.double-slash.frame",
+					"match": "//.*$"
+				}
+			]
+		},
+		"strings": {
+			"patterns": [
+				{
+					"name": "string.quoted.double.frame",
+					"begin": "\"",
+					"end": "\"",
+					"patterns": [
+						{
+							"match": "\\\\.",
+							"name": "constant.character.escape.frame"
+						}
+					]
+				}
+			]
+		},
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.frame",
+					"match": "\\b(page|component|fn|if|for|switch|case|return|fetch|import)\\b"
+				},
+				{
+					"name": "keyword.operator.frame",
+					"match": "(:|=>|===)"
+				}
+			]
+		},
+		"variables": {
+			"patterns": [
+				{
+					"name": "variable.other.frame",
+					"match": "\\$[a-zA-Z_][a-zA-Z0-9_]*"
+				},
+				{
+					"name": "keyword.other.vars.frame",
+					"match": ":vars\\b"
+				}
+			]
+		},
+		"functions": {
+			"patterns": [
+				{
+					"name": "entity.name.function.frame",
+					"begin": "fn\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*:",
+					"beginCaptures": {
+						"1": {
+							"name": "entity.name.function.frame"
+						}
+					},
+					"end": "=>",
+					"patterns": [
+						{
+							"match": "\\([a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*(?:,\\s*[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*)*\\)",
+							"name": "variable.parameter.frame"
+						}
+					]
+				},
+				{
+					"name": "support.function.frame",
+					"match": "[a-zA-Z_][a-zA-Z0-9_]*:(?=\\()"
+				}
+			]
+		},
+		"components": {
+			"patterns": [
+				{
+					"name": "entity.name.type.component.frame",
+					"begin": "(component\\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\\s*:",
+					"beginCaptures": {
+						"1": {
+							"name": "keyword.control.frame"
+						},
+						"2": {
+							"name": "entity.name.type.component.frame"
+						}
+					},
+					"end": "}",
+					"patterns": [
+						{
+							"include": "#styles"
+						},
+						{
+							"include": "#strings"
+						},
+						{
+							"include": "#variables"
+						},
+						{
+							"include": "#keywords"
+						}
+					]
+				}
+			]
+		},
+		"pages": {
+			"patterns": [
+				{
+					"name": "entity.name.type.page.frame",
+					"begin": "page:",
+					"end": "}",
+					"patterns": [
+						{
+							"match": "name:|route:|styles:|children:",
+							"name": "keyword.control.frame"
+						},
+						{
+							"include": "#strings"
+						},
+						{
+							"include": "#styles"
+						}
+					]
+				}
+			]
+		},
+		"imports": {
+			"patterns": [
+				{
+					"name": "keyword.control.import.frame",
+					"begin": "import\\s+({)?",
+					"beginCaptures": {
+						"1": {
+							"name": "punctuation.definition.block.frame"
+						}
+					},
+					"end": "(?(1)})",
+					"patterns": [
+						{
+							"match": "[a-zA-Z_][a-zA-Z0-9_]*\\s*(as\\s*[a-zA-Z_][a-zA-Z0-9_]*)?",
+							"captures": {
+								"0": {
+									"name": "entity.name.type.frame"
+								},
+								"1": {
+									"name": "keyword.other.frame"
+								}
+							}
+						},
+						{
+							"include": "#strings"
+						}
+					]
+				}
+			]
+		},
+		"i18n": {
+			"patterns": [
+				{
+					"name": "keyword.other.i18n.frame",
+					"begin": ":i18n\\b",
+					"end": "}",
+					"patterns": [
+						{
+							"match": "[a-zA-Z_][a-zA-Z0-9_]*:",
+							"name": "entity.name.tag.frame"
+						},
+						{
+							"include": "#strings"
+						}
+					]
+				}
+			]
+		},
+		"styles": {
+			"patterns": [
+				{
+					"name": "meta.styles.frame",
+					"begin": "styles:\\s*{",
+					"end": "}",
+					"patterns": [
+						{
+							"match": "[a-zA-Z_][a-zA-Z0-9_]*:",
+							"name": "support.type.property-name.frame"
+						},
+						{
+							"include": "#strings"
+						},
+						{
+							"include": "#variables"
+						},
+						{
+							"include": "#numbers"
+						}
+					]
+				}
+			]
+		},
+		"numbers": {
+			"patterns": [
+				{
+					"name": "constant.numeric.frame",
+					"match": "\\d+(\\.\\d+)?(?:dp|px|%|ms)?"
+				}
+			]
+		}
+	}
+}

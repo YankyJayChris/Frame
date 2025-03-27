@@ -1,3 +1,4 @@
+// frame/src/compiler/mod.rs
 use crate::parser::{AST, Component as ParserComponent, Expr, Animation as ParserAnimation};
 use std::fmt::Write;
 
@@ -30,13 +31,20 @@ pub fn compile(ast: AST) -> String {
         if comp_def.on_unmount.is_some() { writeln!(code, "    on_unmount: Option<String>,").unwrap(); }
         if comp_def.data.is_some() { writeln!(code, "    data: Reactive<String>,").unwrap(); }
         if comp_def.build.is_some() { writeln!(code, "    build: Box<dyn Fn(&str) -> Box<dyn Component>>,").unwrap(); }
+        // New touch event fields
+        if comp_def.props.contains_key("on_touch_start") { writeln!(code, "    on_touch_start: Option<String>,").unwrap(); }
+        if comp_def.props.contains_key("on_touch_move") { writeln!(code, "    on_touch_move: Option<String>,").unwrap(); }
+        if comp_def.props.contains_key("on_touch_end") { writeln!(code, "    on_touch_end: Option<String>,").unwrap(); }
+        if comp_def.props.contains_key("on_touch_cancel") { writeln!(code, "    on_touch_cancel: Option<String>,").unwrap(); }
         for (prop_name, (prop_type, _)) in &comp_def.props {
-            writeln!(code, "    {}: {},", prop_name, match prop_type.as_str() {
-                "string" => "String",
-                "number" => "f64",
-                "bool" => "bool",
-                _ => "String",
-            }).unwrap();
+            if !prop_name.starts_with("on_") {  // Exclude event handlers from props
+                writeln!(code, "    {}: {},", prop_name, match prop_type.as_str() {
+                    "string" => "String",
+                    "number" => "f64",
+                    "bool" => "bool",
+                    _ => "String",
+                }).unwrap();
+            }
         }
         writeln!(code, "}}").unwrap();
 
@@ -57,17 +65,24 @@ pub fn compile(ast: AST) -> String {
             let (param, build_comp) = comp_def.build.as_ref().unwrap();
             writeln!(code, "            build: Box::new(|{}| Box::new({})),", param, compile_component(build_comp, 0, 0, &ast)).unwrap();
         }
+        // New touch event initializations
+        if comp_def.props.contains_key("on_touch_start") { writeln!(code, "            on_touch_start: None,").unwrap(); }
+        if comp_def.props.contains_key("on_touch_move") { writeln!(code, "            on_touch_move: None,").unwrap(); }
+        if comp_def.props.contains_key("on_touch_end") { writeln!(code, "            on_touch_end: None,").unwrap(); }
+        if comp_def.props.contains_key("on_touch_cancel") { writeln!(code, "            on_touch_cancel: None,").unwrap(); }
         for (prop_name, (prop_type, required)) in &comp_def.props {
-            let rust_type = match prop_type.as_str() {
-                "string" => "String",
-                "number" => "f64",
-                "bool" => "bool",
-                _ => "String",
-            };
-            if *required {
-                writeln!(code, "            {}: props.get(\"{}\").expect(\"Missing required prop {}\").parse::<{}>().unwrap(),", prop_name, prop_name, prop_name, rust_type).unwrap();
-            } else {
-                writeln!(code, "            {}: props.get(\"{}\").map_or({}::default(), |v| v.parse::<{}>().unwrap_or_default()),", prop_name, prop_name, rust_type, rust_type).unwrap();
+            if !prop_name.starts_with("on_") {  // Exclude event handlers
+                let rust_type = match prop_type.as_str() {
+                    "string" => "String",
+                    "number" => "f64",
+                    "bool" => "bool",
+                    _ => "String",
+                };
+                if *required {
+                    writeln!(code, "            {}: props.get(\"{}\").expect(\"Missing required prop {}\").parse::<{}>().unwrap(),", prop_name, prop_name, prop_name, rust_type).unwrap();
+                } else {
+                    writeln!(code, "            {}: props.get(\"{}\").map_or({}::default(), |v| v.parse::<{}>().unwrap_or_default()),", prop_name, prop_name, rust_type, rust_type).unwrap();
+                }
             }
         }
         writeln!(code, "        }};").unwrap();
@@ -78,6 +93,11 @@ pub fn compile(ast: AST) -> String {
         if let Some(mount) = &comp_def.on_mount { writeln!(code, "        comp.on_mount = Some(\"{}\".to_string());", mount); }
         if let Some(update) = &comp_def.on_update { writeln!(code, "        comp.on_update = Some(\"{}\".to_string());", update); }
         if let Some(unmount) = &comp_def.on_unmount { writeln!(code, "        comp.on_unmount = Some(\"{}\".to_string());", unmount); }
+        // New touch event assignments
+        if comp_def.props.contains_key("on_touch_start") { writeln!(code, "        comp.on_touch_start = props.get(\"on_touch_start\").map(|s| s.to_string());").unwrap(); }
+        if comp_def.props.contains_key("on_touch_move") { writeln!(code, "        comp.on_touch_move = props.get(\"on_touch_move\").map(|s| s.to_string());").unwrap(); }
+        if comp_def.props.contains_key("on_touch_end") { writeln!(code, "        comp.on_touch_end = props.get(\"on_touch_end\").map(|s| s.to_string());").unwrap(); }
+        if comp_def.props.contains_key("on_touch_cancel") { writeln!(code, "        comp.on_touch_cancel = props.get(\"on_touch_cancel\").map(|s| s.to_string());").unwrap(); }
         writeln!(code, "        comp.styles = Styles {{ props: {:#?} }};", resolve_styles(&comp_def.styles, &ast.vars)).unwrap();
         writeln!(code, "        comp").unwrap();
         writeln!(code, "    }}").unwrap();
@@ -122,6 +142,11 @@ pub fn compile(ast: AST) -> String {
         writeln!(code, "    fn unmount(&self) {{ if let Some(u) = &self.on_unmount {{ State::new().call(u); }} }}").unwrap();
         writeln!(code, "    fn children(&self) -> Option<&Vec<Rc<RefCell<Box<dyn Component>>>>> {{ Some(&self.children) }}").unwrap();
         writeln!(code, "    fn on_click(&self) -> Option<&String> {{ self.on_click.as_ref() }}").unwrap();
+        // New touch event implementations
+        writeln!(code, "    fn on_touch_start(&self) -> Option<&String> {{ self.on_touch_start.as_ref() }}").unwrap();
+        writeln!(code, "    fn on_touch_move(&self) -> Option<&String> {{ self.on_touch_move.as_ref() }}").unwrap();
+        writeln!(code, "    fn on_touch_end(&self) -> Option<&String> {{ self.on_touch_end.as_ref() }}").unwrap();
+        writeln!(code, "    fn on_touch_cancel(&self) -> Option<&String> {{ self.on_touch_cancel.as_ref() }}").unwrap();
         writeln!(code, "    fn styles(&self) -> Styles {{ self.styles.clone() }}").unwrap();
         writeln!(code, "}}").unwrap();
     }
@@ -247,6 +272,19 @@ pub fn compile(ast: AST) -> String {
     writeln!(code, "                            if let Some(ref on_click) = child_ref.on_click() {{",).unwrap();
     writeln!(code, "                                self.state.call(on_click);").unwrap();
     writeln!(code, "                            }}").unwrap();
+    // New touch event handling
+    writeln!(code, "                            if let Some(ref on_touch_start) = child_ref.on_touch_start() {{",).unwrap();
+    writeln!(code, "                                self.state.call(&format!(\"{}:({}, {})\", on_touch_start, x, y));").unwrap();
+    writeln!(code, "                            }}").unwrap();
+    writeln!(code, "                            if let Some(ref on_touch_move) = child_ref.on_touch_move() {{",).unwrap();
+    writeln!(code, "                                self.state.call(&format!(\"{}:({}, {})\", on_touch_move, x, y));").unwrap();
+    writeln!(code, "                            }}").unwrap();
+    writeln!(code, "                            if let Some(ref on_touch_end) = child_ref.on_touch_end() {{",).unwrap();
+    writeln!(code, "                                self.state.call(&format!(\"{}:({}, {})\", on_touch_end, x, y));").unwrap();
+    writeln!(code, "                            }}").unwrap();
+    writeln!(code, "                            if let Some(ref on_touch_cancel) = child_ref.on_touch_cancel() {{",).unwrap();
+    writeln!(code, "                                self.state.call(&format!(\"{}:({}, {})\", on_touch_cancel, x, y));").unwrap();
+    writeln!(code, "                            }}").unwrap();
     writeln!(code, "                        }}").unwrap();
     writeln!(code, "                    }}").unwrap();
     writeln!(code, "                }}").unwrap();
@@ -309,13 +347,15 @@ fn compile_component(comp: &ParserComponent, x: i32, y: i32, ast: &AST) -> Strin
     } else if ast.components.contains_key(&comp.name) {
         writeln!(code, "{}::new(HashMap::from([", comp.name).unwrap();
         for (prop_name, (prop_type, _)) in &comp.props {
-            let value = comp.content.as_ref().unwrap_or(&"".to_string());
-            let parsed_value = if value.starts_with("t:") {
-                format!("I18N.get(\"{}\").unwrap_or(&String::new()).clone()", value.trim_start_matches("t:").trim_matches('"'))
-            } else {
-                format!("\"{}\".to_string()", value.trim_matches('"'))
-            };
-            writeln!(code, "    (\"{}\".to_string(), {}),", prop_name, parsed_value).unwrap();
+            if !prop_name.starts_with("on_") {  // Exclude event handlers from props
+                let value = comp.content.as_ref().unwrap_or(&"".to_string());
+                let parsed_value = if value.starts_with("t:") {
+                    format!("I18N.get(\"{}\").unwrap_or(&String::new()).clone()", value.trim_start_matches("t:").trim_matches('"'))
+                } else {
+                    format!("\"{}\".to_string()", value.trim_matches('"'))
+                };
+                writeln!(code, "    (\"{}\".to_string(), {}),", prop_name, parsed_value).unwrap();
+            }
         }
         writeln!(code, "]))").unwrap();
     } else {
@@ -341,6 +381,11 @@ fn compile_component(comp: &ParserComponent, x: i32, y: i32, ast: &AST) -> Strin
         if let Some(on_mount) = &comp.on_mount { writeln!(code, "    on_mount: Some(\"{}\".to_string()),", on_mount).unwrap(); }
         if let Some(on_update) = &comp.on_update { writeln!(code, "    on_update: Some(\"{}\".to_string()),", on_update).unwrap(); }
         if let Some(on_unmount) = &comp.on_unmount { writeln!(code, "    on_unmount: Some(\"{}\".to_string()),", on_unmount).unwrap(); }
+        // New touch event assignments
+        if comp.props.contains_key("on_touch_start") { writeln!(code, "    on_touch_start: Some(\"{}\".to_string()),", comp.props.get("on_touch_start").unwrap().0).unwrap(); }
+        if comp.props.contains_key("on_touch_move") { writeln!(code, "    on_touch_move: Some(\"{}\".to_string()),", comp.props.get("on_touch_move").unwrap().0).unwrap(); }
+        if comp.props.contains_key("on_touch_end") { writeln!(code, "    on_touch_end: Some(\"{}\".to_string()),", comp.props.get("on_touch_end").unwrap().0).unwrap(); }
+        if comp.props.contains_key("on_touch_cancel") { writeln!(code, "    on_touch_cancel: Some(\"{}\".to_string()),", comp.props.get("on_touch_cancel").unwrap().0).unwrap(); }
         writeln!(code, "    dirty: true,").unwrap();
         writeln!(code, "}}").unwrap();
     }
@@ -366,7 +411,17 @@ fn resolve_styles(styles: &crate::parser::Styles, vars: &HashMap<String, String>
 fn compile_expr(expr: &Expr) -> String {
     match expr {
         Expr::Return(var, value) => format!("        let {} = \"{}\".to_string();", var, value),
-        Expr::Call(call) => format!("        State::new().call(\"{}\");", call),
+        Expr::Call(call) => {
+            if call.starts_with("camera:") {
+                "runtime::camera()".to_string()
+            } else if call.starts_with("location:") {
+                "runtime::location()".to_string()
+            } else if call.starts_with("notification:") {
+                format!("runtime::notification(\"{}\")", call.trim_start_matches("notification:(").trim_end_matches(")"))
+            } else {
+                format!("State::new().call(\"{}\");", call)
+            }
+        }
         Expr::Operation(left, op, right) => format!("        let result = {} {} {};", left, op, right),
         Expr::If(cond1, cond2, body) => {
             let mut s = format!("        if {} == {} {{\n", cond1, cond2);

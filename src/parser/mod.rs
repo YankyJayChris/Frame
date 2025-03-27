@@ -2,8 +2,8 @@ use pest::Parser;
 use pest_derive::Parser;
 use std::collections::HashMap;
 
-#[derive(Parser)]
-#[grammar = "frame.pest"] 
+#[derive(pest::Parser)]
+#[grammar = "frame.pest"]
 pub struct FrameParser;
 
 #[derive(Debug, Default)]
@@ -36,12 +36,16 @@ pub struct Component {
     pub content: Option<String>,
     pub children: Vec<Component>,
     pub on_click: Option<String>,
+    pub on_touch_start: Option<String>,         // Added
+    pub on_touch_move: Option<String>,          // Added
+    pub on_touch_end: Option<String>,           // Added
+    pub on_touch_cancel: Option<String>,        // Added
     pub on_mount: Option<String>,
     pub on_update: Option<String>,
     pub on_unmount: Option<String>,
     pub animate: Option<Animation>,
     pub data: Option<String>,
-    pub build: Option<(String, Component)>, // (param, body)
+    pub build: Option<(String, Component)>,     // (param, body)
 }
 
 #[derive(Debug, Default)]
@@ -99,15 +103,16 @@ pub struct Assertion {
 pub fn parse_project(dir: &str) -> Result<AST, Box<dyn std::error::Error>> {
     let mut ast = AST::default();
     let project_file = std::fs::read_to_string(format!("{}/src/project.fr", dir))?;
-    let pairs = FrameParser::parse(Rule::file, &project_file)?.next().unwrap();
+    let pairs = FrameParser::parse(Rule::file, &project_file)?.next().ok_or("Empty file")?;
 
     for pair in pairs.into_inner() {
         match pair.as_rule() {
             Rule::vars => {
                 for var_pair in pair.into_inner() {
                     if var_pair.as_rule() == Rule::ident {
-                        let name = var_pair.as_str().to_string();
-                        let value = var_pair.into_inner().next().unwrap().as_str().to_string();
+                        let mut inner = var_pair.into_inner();
+                        let name = inner.next().ok_or("Missing var name")?.as_str().to_string();
+                        let value = inner.next().ok_or("Missing var value")?.as_str().to_string();
                         ast.vars.insert(name, value);
                     }
                 }
@@ -115,8 +120,9 @@ pub fn parse_project(dir: &str) -> Result<AST, Box<dyn std::error::Error>> {
             Rule::i18n => {
                 for i18n_pair in pair.into_inner() {
                     if i18n_pair.as_rule() == Rule::ident {
-                        let key = i18n_pair.as_str().to_string();
-                        let value = i18n_pair.into_inner().next().unwrap().as_str().to_string();
+                        let mut inner = i18n_pair.into_inner();
+                        let key = inner.next().ok_or("Missing i18n key")?.as_str().to_string();
+                        let value = inner.next().ok_or("Missing i18n value")?.as_str().to_string();
                         ast.i18n.insert(key, value);
                     }
                 }
@@ -134,26 +140,32 @@ pub fn parse_project(dir: &str) -> Result<AST, Box<dyn std::error::Error>> {
                                 alias = Some(import_part.as_str().to_string());
                             }
                         }
-                        Rule::path => path = Some(import_part.as_str().to_string()),
+                        Rule::path => path = Some(import_part.as_str().trim_matches('"').to_string()),
                         _ => {}
                     }
                 }
-                let imports = ast.imports.entry(path.unwrap()).or_insert_with(Vec::new);
-                imports.push((ident.unwrap(), alias));
+                let imports = ast.imports.entry(path.ok_or("Missing import path")?).or_insert_with(Vec::new);
+                imports.push((ident.ok_or("Missing import ident")?, alias));
             }
             Rule::page => {
                 let mut page = Page {
+                    name: String::new(),
+                    route: String::new(),
+                    before_enter: None,
+                    before_leave: None,
+                    lazy: None,
                     styles: Styles::default(),
                     children: Vec::new(),
-                    ..Default::default()
                 };
                 for page_part in pair.into_inner() {
                     match page_part.as_rule() {
                         Rule::string => {
                             if page.name.is_empty() {
                                 page.name = page_part.as_str().trim_matches('"').to_string();
-                            } else {
+                            } else if page.route.is_empty() {
                                 page.route = page_part.as_str().trim_matches('"').to_string();
+                            } else {
+                                page.lazy = Some(page_part.as_str().trim_matches('"').to_string());
                             }
                         }
                         Rule::call => {
@@ -173,26 +185,33 @@ pub fn parse_project(dir: &str) -> Result<AST, Box<dyn std::error::Error>> {
             }
             Rule::fn_def => {
                 let mut func = Function {
+                    name: String::new(),
                     params: Vec::new(),
+                    return_type: None,
                     body: Vec::new(),
-                    ..Default::default()
                 };
                 for fn_part in pair.into_inner() {
                     match fn_part.as_rule() {
                         Rule::ident => {
                             if func.name.is_empty() {
                                 func.name = fn_part.as_str().to_string();
-                            } else if func.return_type.is_none() {
-                                func.return_type = Some(fn_part.as_str().to_string());
                             } else {
-                                func.params.push((fn_part.as_str().to_string(), fn_part.into_inner().next().unwrap().as_str().to_string()));
+                                let mut inner = fn_part.into_inner();
+                                let param_name = inner.next().ok_or("Missing param name")?.as_str().to_string();
+                                let param_type = inner.next().ok_or("Missing param type")?.as_str().to_string();
+                                func.params.push((param_name, param_type));
                             }
                         }
+                        Rule::type_name => func.return_type = Some(fn_part.as_str().to_string()),
                         Rule::expr => func.body.push(parse_expr(fn_part)),
                         _ => {}
                     }
                 }
                 ast.functions.insert(func.name.clone(), func);
+            }
+            Rule::component => {
+                let comp = parse_component(pair);
+                ast.components.insert(comp.name.clone(), comp);
             }
             Rule::test_suite => {
                 let mut suite = TestSuite {
@@ -251,8 +270,9 @@ fn parse_styles(pair: pest::iterators::Pair<Rule>) -> Styles {
     let mut styles = Styles::default();
     for style_pair in pair.into_inner() {
         if style_pair.as_rule() == Rule::ident {
-            let key = style_pair.as_str().to_string();
-            let value = style_pair.into_inner().next().unwrap().as_str().to_string();
+            let mut inner = style_pair.into_inner();
+            let key = inner.next().ok_or("Missing style key").map(|p| p.as_str().to_string()).unwrap();
+            let value = inner.next().ok_or("Missing style value").map(|p| p.as_str().to_string()).unwrap();
             styles.props.insert(key, value);
         }
     }
@@ -266,8 +286,12 @@ fn parse_component(pair: pest::iterators::Pair<Rule>) -> Component {
             Rule::ident => comp.name = comp_part.as_str().to_string(),
             Rule::styles => comp.styles = parse_styles(comp_part),
             Rule::content => comp.content = Some(comp_part.into_inner().next().unwrap().as_str().to_string()),
-            Rule::children => comp.children = comp_part.into_inner().map(parse_component).collect(),
+            Rule::children => comp.children = comp_part.into_inner().filter(|p| p.as_rule() == Rule::component).map(parse_component).collect(),
             Rule::on_click => comp.on_click = Some(parse_call(comp_part.into_inner().next().unwrap())),
+            Rule::on_touch_start => comp.on_touch_start = Some(parse_call(comp_part.into_inner().next().unwrap())), // Added
+            Rule::on_touch_move => comp.on_touch_move = Some(parse_call(comp_part.into_inner().next().unwrap())),   // Added
+            Rule::on_touch_end => comp.on_touch_end = Some(parse_call(comp_part.into_inner().next().unwrap())),     // Added
+            Rule::on_touch_cancel => comp.on_touch_cancel = Some(parse_call(comp_part.into_inner().next().unwrap())), // Added
             Rule::on_mount => comp.on_mount = Some(parse_call(comp_part.into_inner().next().unwrap())),
             Rule::on_update => comp.on_update = Some(parse_call(comp_part.into_inner().next().unwrap())),
             Rule::on_unmount => comp.on_unmount = Some(parse_call(comp_part.into_inner().next().unwrap())),
@@ -281,6 +305,8 @@ fn parse_component(pair: pest::iterators::Pair<Rule>) -> Component {
                 };
                 for anim_part in comp_part.into_inner() {
                     match anim_part.as_rule() {
+                        Rule::ident => anim.kind = anim_part.as_str().to_string(),
+                        Rule::number => anim.duration = anim_part.as_str().parse().unwrap_or(0),
                         Rule::styles => {
                             if anim.from.props.is_empty() {
                                 anim.from = parse_styles(anim_part);
@@ -288,7 +314,6 @@ fn parse_component(pair: pest::iterators::Pair<Rule>) -> Component {
                                 anim.to = parse_styles(anim_part);
                             }
                         }
-                        Rule::number => anim.duration = anim_part.as_str().parse().unwrap(),
                         Rule::string => anim.easing = anim_part.as_str().trim_matches('"').to_string(),
                         _ => {}
                     }
@@ -298,9 +323,10 @@ fn parse_component(pair: pest::iterators::Pair<Rule>) -> Component {
             Rule::props => {
                 for prop_pair in comp_part.into_inner() {
                     if prop_pair.as_rule() == Rule::ident {
-                        let name = prop_pair.as_str().to_string();
-                        let type_ = prop_pair.into_inner().next().unwrap().as_str().to_string();
-                        let required = prop_pair.into_inner().any(|p| p.as_rule() == Rule::string && p.as_str() == "required");
+                        let mut inner = prop_pair.into_inner();
+                        let name = inner.next().ok_or("Missing prop name").map(|p| p.as_str().to_string()).unwrap();
+                        let type_ = inner.next().ok_or("Missing prop type").map(|p| p.as_str().to_string()).unwrap();
+                        let required = inner.any(|p| p.as_rule() == Rule::string && p.as_str() == "required");
                         comp.props.insert(name, (type_, required));
                     }
                 }
@@ -311,16 +337,12 @@ fn parse_component(pair: pest::iterators::Pair<Rule>) -> Component {
                 let mut body = None;
                 for build_part in comp_part.into_inner() {
                     match build_part.as_rule() {
-                        Rule::ident => {
-                            if param.is_empty() {
-                                param = build_part.as_str().to_string();
-                            }
-                        }
+                        Rule::ident => param = build_part.as_str().to_string(),
                         Rule::component => body = Some(parse_component(build_part)),
                         _ => {}
                     }
                 }
-                comp.build = Some((param, body.unwrap()));
+                comp.build = Some((param, body.unwrap_or_default()));
             }
             _ => {}
         }
@@ -332,50 +354,57 @@ fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
     match pair.as_rule() {
         Rule::expr => {
             let mut inner = pair.into_inner();
-            let first = inner.next().unwrap();
+            let first = inner.next().ok_or("Missing expr part").unwrap();
             match first.as_rule() {
                 Rule::return_stmt => {
-                    let var = first.into_inner().next().unwrap().as_str().to_string();
-                    let value = inner.next().unwrap().as_str().to_string();
+                    let mut inner = first.into_inner();
+                    let var = inner.next().ok_or("Missing return var").map(|p| p.as_str().to_string()).unwrap();
+                    let value = inner.next().ok_or("Missing return value").map(|p| p.as_str().to_string()).unwrap();
                     Expr::Return(var, value)
                 }
                 Rule::call => Expr::Call(parse_call(first)),
                 Rule::operation => {
-                    let left = first.as_str().to_string();
-                    let op = inner.next().unwrap().as_str().to_string();
-                    let right = inner.next().unwrap().as_str().to_string();
+                    let mut inner = first.into_inner();
+                    let left = inner.next().ok_or("Missing left operand").map(|p| p.as_str().to_string()).unwrap();
+                    let op = inner.next().ok_or("Missing operator").map(|p| p.as_str().to_string()).unwrap();
+                    let right = inner.next().ok_or("Missing right operand").map(|p| p.as_str().to_string()).unwrap();
                     Expr::Operation(left, op, right)
                 }
                 Rule::if_stmt => {
-                    let cond1 = first.into_inner().next().unwrap().as_str().to_string();
-                    let cond2 = inner.next().unwrap().as_str().to_string();
-                    let body = inner.next().unwrap().into_inner().map(parse_expr).collect();
+                    let mut inner = first.into_inner();
+                    let cond1 = inner.next().ok_or("Missing if condition 1").map(|p| p.as_str().to_string()).unwrap();
+                    let cond2 = inner.next().ok_or("Missing if condition 2").map(|p| p.as_str().to_string()).unwrap();
+                    let body = inner.next().ok_or("Missing if body").map(|p| p.into_inner().map(parse_expr).collect()).unwrap();
                     Expr::If(cond1, cond2, body)
                 }
                 Rule::for_stmt => {
-                    let items = first.into_inner().next().unwrap().as_str().to_string();
-                    let item = inner.next().unwrap().as_str().to_string();
-                    let body = inner.next().unwrap().into_inner().map(parse_expr).collect();
+                    let mut inner = first.into_inner();
+                    let items = inner.next().ok_or("Missing for items").map(|p| p.as_str().to_string()).unwrap();
+                    let item = inner.next().ok_or("Missing for item").map(|p| p.as_str().to_string()).unwrap();
+                    let body = inner.next().ok_or("Missing for body").map(|p| p.into_inner().map(parse_expr).collect()).unwrap();
                     Expr::For(items, item, body)
                 }
                 Rule::switch_stmt => {
-                    let var = first.into_inner().next().unwrap().as_str().to_string();
+                    let mut inner = first.into_inner();
+                    let var = inner.next().ok_or("Missing switch var").map(|p| p.as_str().to_string()).unwrap();
                     let cases = inner.map(|case| {
-                        let value = case.into_inner().next().unwrap().as_str().trim_matches('"').to_string();
-                        let body = case.into_inner().map(parse_expr).collect();
-                        (value, body)
-                    }).collect();
+                        let mut case_inner = case.into_inner();
+                        let value = case_inner.next().ok_or("Missing case value").map(|p| p.as_str().trim_matches('"').to_string()).unwrap();
+                        let body = case_inner.map(parse_expr).collect();
+                        Ok((value, body))
+                    }).collect::<Result<Vec<_>, &'static str>>()?;
                     Expr::Switch(var, cases)
                 }
                 Rule::fetch => {
-                    let url = first.into_inner().next().unwrap().as_str().to_string();
-                    let options = inner.next().unwrap().as_str().to_string();
+                    let mut inner = first.into_inner();
+                    let url = inner.next().ok_or("Missing fetch url").map(|p| p.as_str().to_string()).unwrap();
+                    let options = inner.next().ok_or("Missing fetch options").map(|p| p.as_str().to_string()).unwrap();
                     Expr::Fetch(url, options)
                 }
-                _ => unreachable!(),
+                _ => return Err("Unknown expression type").unwrap(),
             }
         }
-        _ => unreachable!(),
+        _ => return Err("Expected expression").unwrap(),
     }
 }
 
@@ -384,9 +413,34 @@ fn parse_call(pair: pest::iterators::Pair<Rule>) -> String {
     for part in pair.into_inner() {
         match part.as_rule() {
             Rule::ident => call_str.push_str(part.as_str()),
-            Rule::arg => call_str.push_str(&format!("({})", part.as_str())),
+            Rule::arg => call_str.push_str(&format!("({})", part.into_inner().map(|p| p.as_str()).collect::<Vec<_>>().join(","))),
             _ => {}
         }
     }
     call_str
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_vars() {
+        let input = r#":vars { $primary: "#007BFF" }";
+        let mut ast = AST::default();
+        let pairs = FrameParser::parse(Rule::file, input).unwrap().next().unwrap();
+        for pair in pairs.into_inner() {
+            if pair.as_rule() == Rule::vars {
+                for var_pair in pair.into_inner() {
+                    if var_pair.as_rule() == Rule::ident {
+                        let mut inner = var_pair.into_inner();
+                        let name = inner.next().unwrap().as_str().to_string();
+                        let value = inner.next().unwrap().as_str().to_string();
+                        ast.vars.insert(name, value);
+                    }
+                }
+            }
+        }
+        assert_eq!(ast.vars.get("$primary"), Some(&"#007BFF".to_string()));
+    }
 }

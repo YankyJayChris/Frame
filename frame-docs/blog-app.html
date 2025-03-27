@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame Blog App</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .CodeMirror {
+            height: auto;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Frame Blog App</h1>
+    <p>A complete blog app using all Frame features, including plugins.</p>
+    <textarea id="code-editor">
+:vars {
+  $primary: "#007BFF";
+  $spacing: "10dp";
+}
+
+:i18n {
+  home: "Home";
+  posts: "Posts";
+  profile: "Profile";
+  about: "About";
+  submit: "Submit";
+  camera: "Open Camera";
+  location: "Get Location";
+  notify: "Send Notification";
+}
+
+page: {
+  name: "Home"
+  route: "/"
+  styles: { direction: "column" }
+  children: [
+    AppBar: {
+      title: t:"home"
+      styles: { background: "$primary" }
+      on_touch_move: "handle_swipe:($touch_x, $touch_y)"
+    },
+    Text: {
+      content: "Welcome to the Blog"
+      styles: { 
+        x: "$spacing"; 
+        y: "60dp"; 
+        font_size: "20dp" 
+      }
+    },
+    Button: {
+      content: t:"posts"
+      styles: { 
+        x: "$spacing"; 
+        y: "100dp"; 
+        background: "$primary"; 
+        color: "#FFF" 
+      }
+      on_click: "navigate:(\"/posts\")"
+    }
+  ]
+}
+
+page: {
+  name: "Posts"
+  route: "/posts"
+  styles: { direction: "column" }
+  before_enter: "load_posts:()"
+  children: [
+    AppBar: { 
+        title: t:"posts"; 
+        styles: { 
+            background: "$primary" 
+        } 
+    },
+    List: {
+      data: "$posts"
+      build: "post => Text: { content: post }"
+      styles: { x: "$spacing"; y: "60dp" }
+    }
+  ]
+}
+
+page: {
+  name: "Profile"
+  route: "/profile"
+  styles: { direction: "column" }
+  children: [
+    AppBar: { title: t:"profile"; styles: { background: "$primary" } },
+    Form: {
+      validation: "required"
+      on_submit: "submit_profile:()"
+      styles: { x: "$spacing"; y: "60dp" }
+      children: [
+        Input: {
+          value: "Enter name"
+          on_change: "update_name:($value)"
+          styles: { 
+            width: "200dp" 
+          }
+        },
+        Button: {
+          content: t:"submit"
+          styles: { 
+            y: "40dp"; 
+            background: "$primary"; 
+            color: "#FFF" 
+          }
+        },
+        Button: {
+          content: t:"location"
+          on_click: "get_location:()"
+          styles: { 
+            y: "80dp"; 
+            background: "$primary"; 
+            color: "#FFF" 
+          }
+        },
+        Text: {
+          content: "Swipe to Test Touch"
+          on_touch_move: "handle_swipe:($touch_x, $touch_y)"
+          styles: { y: "120dp"; font_size: "16dp" }
+        }
+      ]
+    }
+  ]
+}
+
+page: {
+  name: "About"
+  route: "/about"
+  styles: { 
+    direction: "column" 
+  }
+  children: [
+    AppBar: { 
+        title: t:"about"; 
+        styles: { 
+            background: "$primary" 
+        } 
+    },
+    Text: {
+      content: "About this blog"
+      styles: { 
+        x: "$spacing"; 
+        y: "60dp" 
+    }
+    },
+    Image: {
+      src: "logo.svg"
+      styles: { 
+        x: "$spacing"; 
+        y: "100dp"; 
+        width: "100dp"; 
+        height: "100dp" }
+    }
+  ]
+}
+
+BottomBar: {
+  current: "0"
+  items: [
+    BottomBarItem: { 
+        content: t:"home"; 
+        icon: "home.svg"; 
+        styles: { x: "$spacing"; y: "60dp" }
+        on_click: "navigate:("/")" 
+    },
+    BottomBarItem: { c
+        ontent: t:"posts"; 
+        icon: "posts.svg"; 
+        styles: { x: "$spacing"; y: "60dp" }
+        on_click: "navigate:("/posts")" 
+    },
+    BottomBarItem: { 
+        content: t:"profile"; 
+        icon: "profile.svg"; 
+        styles: { x: "$spacing"; y: "60dp" }
+        on_click: "navigate:("/profile")" 
+    },
+    BottomBarItem: { 
+        content: t:"about"; 
+        icon: "about.svg"; 
+        styles: { x: "$spacing"; y: "60dp" }
+        on_click: "navigate:("/about")" 
+    }
+  ]
+  styles: { 
+    y: "550dp"; 
+    background: "$primary" 
+  }
+}
+
+fn navigate:(path:string) => {
+  navigate(path)
+}
+
+fn update_name:(value:string) => {
+  state.name = value
+}
+
+fn submit_profile:() => {
+  log = "Profile submitted: $state.name"
+}
+
+fn load_posts:() => {
+  fetch "https://api.example.com/posts" {
+    then: "posts => state.posts = posts"
+  }
+}
+
+fn open_camera:() => {
+  camera:capture()
+}
+
+fn get_location:() => {
+  location:get()
+}
+
+fn send_notification:(msg:string) => {
+  notification:send(msg)
+}
+
+fn handle_swipe:(x:number, y:number) => {
+  return log = "Swiped to ($x, $y)"
+}
+
+fn select_option:(index:number) => {
+  log = "Selected option at index $index"
+}
+
+describe: "Blog Tests" => {
+  it "navigates to posts" => {
+    assert navigate("/posts") == "/posts"
+  }
+}
+</textarea>
+
+    <script>
+        // Define the custom Frame mode
+        CodeMirror.defineMode("frame", function () {
+            return {
+                startState: function () {
+                    return { inString: false, inComment: false };
+                },
+                token: function (stream, state) {
+                    // Handle comments
+                    if (!state.inString && stream.match("//")) {
+                        stream.skipToEnd();
+                        state.inComment = true;
+                        return "comment";
+                    }
+                    if (state.inComment) {
+                        stream.skipToEnd();
+                        return "comment";
+                    }
+
+                    // Handle strings
+                    if (!state.inString && stream.match(/"/)) {
+                        state.inString = true;
+                        return "string";
+                    }
+                    if (state.inString) {
+                        if (stream.match(/"/)) {
+                            state.inString = false;
+                        } else {
+                            stream.next();
+                        }
+                        return "string";
+                    }
+
+                    // Keywords
+                    if (stream.match(/\b(page|component|fn|if|for|switch|case|return|fetch|import|:vars|:i18n)\b/)) {
+                        return "keyword";
+                    }
+
+                    // Variables
+                    if (stream.match(/\$[a-zA-Z_][a-zA-Z0-9_]*/)) {
+                        return "variable";
+                    }
+
+                    // Function definitions
+                    if (stream.match(/fn\s+[a-zA-Z_][a-zA-Z0-9_]*\s*:/)) {
+                        return "def";
+                    }
+
+                    // Operators
+                    if (stream.match(/(:|=>|===)/)) {
+                        return "operator";
+                    }
+
+                    // Component names
+                    if (stream.match(/[a-zA-Z_][a-zA-Z0-9_]*\s*:/)) {
+                        return "tag";
+                    }
+
+                    // Numbers with units
+                    if (stream.match(/\d+(\.\d+)?(?:dp|px|%|ms)?/)) {
+                        return "number";
+                    }
+
+                    // Skip whitespace
+                    if (stream.match(/\s+/)) {
+                        return null;
+                    }
+
+                    // Punctuation
+                    if (stream.match(/[{}[\]()=;]/)) {
+                        return "punctuation";
+                    }
+
+                    // Default to plain text
+                    stream.next();
+                    return null;
+                }
+            };
+        });
+
+        // Initialize CodeMirror with the custom Frame mode
+        CodeMirror.fromTextArea(document.getElementById("code-editor"), {
+            mode: "frame",
+            lineNumbers: true,
+            theme: "default",
+            readOnly: false
+        });
+    </script>
+</body>
+
+</html>

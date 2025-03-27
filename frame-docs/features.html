@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame Framework Features</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        h2 { color: #555; }
+        pre { background: #f5f5f5; padding: 10px; border-radius: 5px; }
+        .feature { margin-bottom: 20px; }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            hljs.highlightAll();
+        });
+    </script>
+</head>
+<body>
+    <h1>Frame Framework Features</h1>
+
+    <div class="feature">
+        <h2>1. Variables</h2>
+        <p>Define global variables with <code>:vars</code>.</p>
+        <pre><code class="language-frame">:vars {
+    $primary: "#FF0000";
+    $spacing: "10dp";
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>2. Internationalization (i18n)</h2>
+        <p>Support translations with <code>:i18n</code>.</p>
+        <pre><code class="language-frame">:i18n {
+    title: "Hello World";
+    submit: "Submit";
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>3. Imports</h2>
+        <p>Import files or specific components.</p>
+        <pre><code class="language-frame">import "components.fr"
+import { Card as BlogCard } "./components/Card.fr"</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>4. Pages</h2>
+        <p>Define routes with <code>page:</code>.</p>
+        <pre><code class="language-frame">page: {
+    name: "Home"
+    route: "/"
+    styles: { background: "#FFFFFF" }
+    children: [
+        Text: { content: "Welcome" }
+    ]
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>5. Components</h2>
+        <p>Custom (<code>component</code>) and native components.</p>
+        <pre><code class="language-frame">component Card: {
+    props: { title: string = "Untitled" }
+    styles: { width: "200dp" }
+    content: "$title"
+}
+
+Text: { content: "Native Text" }</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>6. Props</h2>
+        <p>Pass parameters to components.</p>
+        <pre><code class="language-frame">component Button: {
+    props: { label: string = "Click Me" }
+    content: "$label"
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>7. Styling</h2>
+        <p>CSS-like styles with variable substitution.</p>
+        <pre><code class="language-frame">Text: {
+    styles: { color: "$primary"; margin: "$spacing" }
+    content: "Styled"
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>8. Content</h2>
+        <p>Text content with i18n support.</p>
+        <pre><code class="language-frame">Text: {
+    content: t:"title"
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>9. Children</h2>
+        <p>Nested components.</p>
+        <pre><code class="language-frame">Container: {
+    children: [
+        Text: { content: "Child 1" },
+        Button: { content: "Click" }
+    ]
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>10. Animations</h2>
+        <p>Define transitions.</p>
+        <pre><code class="language-frame">Button: {
+    content: "Fade In"
+    animate: {
+        from: { opacity: "0" }
+        to: { opacity: "1" }
+        duration: 500ms
+        easing: "ease-in"
+    }
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>11. Events</h2>
+        <p>Handle user actions and lifecycle events.</p>
+        <pre><code class="language-frame">input: {
+    value: "Enter text"
+    on_change: "update:($value)"
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>12. Functions</h2>
+        <p>Custom logic with expressions.</p>
+        <pre><code class="language-frame">fn update:(value:string) => {
+    if: value === "test" {
+        return result = "matched"
+    }
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>13. State Management</h2>
+        <p>Implicit via functions and props.</p>
+        <pre><code class="language-frame">fn set_text:(text:string) => {
+    return self.text = text
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>14. Navigation</h2>
+        <p>Route navigation in functions.</p>
+        <pre><code class="language-frame">fn go_home:() => {
+    navigate("/home")
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>15. Fetch</h2>
+        <p>HTTP requests.</p>
+        <pre><code class="language-frame">fn load_data:() => {
+    fetch:("https://api.example.com", "method:GET")
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>16. Forms</h2>
+        <p>Form handling with validation.</p>
+        <pre><code class="language-frame">form: {
+    validation: "required"
+    on_submit: "submit:()"
+    children: [
+        input: { value: "Name" }
+    ]
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>17. Lists</h2>
+        <p>Dynamic list rendering.</p>
+        <pre><code class="language-frame">list: {
+    data: posts
+    build:(post) => {
+        Card: { content: "$post.title" }
+    }
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>18. Testing</h2>
+        <p>Jest-like tests.</p>
+        <pre><code class="language-frame">describe: "Button Tests" => {
+    it: "click works" => {
+        expect: button.on_click:("handle_click")
+    }
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>19. Hot Reload</h2>
+        <p>CLI feature: <code>frame preview</code>.</p>
+    </div>
+
+    <div class="feature">
+        <h2>20. Deployment</h2>
+        <p>CLI feature: <code>frame deploy [target]</code>.</p>
+    </div>
+
+    <div class="feature">
+        <h2>21. Camera Plugin</h2>
+        <p>Access the device camera (Android, iOS, Desktop).</p>
+        <pre><code class="language-frame">fn open_camera:() => {
+    return result = camera:()
+}
+
+Button: {
+    content: "Open Camera"
+    on_click: "open_camera:()"
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>22. Location Plugin</h2>
+        <p>Get device location (Android, iOS, Desktop).</p>
+        <pre><code class="language-frame">fn get_location:() => {
+    return loc = location:()
+}
+
+Button: {
+    content: "Get Location"
+    on_click: "get_location:()"
+}</code></pre>
+    </div>
+
+    <div class="feature">
+        <h2>23. Notification Plugin</h2>
+        <p>Send notifications (Android, iOS, Desktop).</p>
+        <pre><code class="language-frame">fn send_notification:(msg:string) => {
+    return result = notification:(msg)
+}
+
+Button: {
+    content: "Notify"
+    on_click: "send_notification:(\"New Post!\")"
+}</code></pre>
+    </div>
+</body>
+</html>
