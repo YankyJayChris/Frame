@@ -1,18 +1,19 @@
 use pest::Parser;
 use pest_derive::Parser;
 use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
 
 #[derive(Parser)]
-#[grammar = "parser/grammar.pest"]
+#[grammar = "frame.pest"] 
 pub struct FrameParser;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AST {
+    pub vars: HashMap<String, String>,
+    pub i18n: HashMap<String, String>,
+    pub imports: HashMap<String, Vec<(String, Option<String>)>>, // path -> (ident, alias)
     pub pages: Vec<Page>,
+    pub components: HashMap<String, Component>,
     pub functions: HashMap<String, Function>,
-    pub components: HashMap<String, ComponentDef>,
     pub tests: Vec<TestSuite>,
 }
 
@@ -20,15 +21,48 @@ pub struct AST {
 pub struct Page {
     pub name: String,
     pub route: String,
+    pub before_enter: Option<String>,
+    pub before_leave: Option<String>,
+    pub lazy: Option<String>,
     pub styles: Styles,
     pub children: Vec<Component>,
+}
+
+#[derive(Debug, Default)]
+pub struct Component {
+    pub name: String,
+    pub props: HashMap<String, (String, bool)>, // (type, required)
+    pub styles: Styles,
+    pub content: Option<String>,
+    pub children: Vec<Component>,
+    pub on_click: Option<String>,
+    pub on_mount: Option<String>,
+    pub on_update: Option<String>,
+    pub on_unmount: Option<String>,
+    pub animate: Option<Animation>,
+    pub data: Option<String>,
+    pub build: Option<(String, Component)>, // (param, body)
+}
+
+#[derive(Debug, Default)]
+pub struct Styles {
+    pub props: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+pub struct Animation {
+    pub kind: String,
+    pub duration: u32,
+    pub from: Styles,
+    pub to: Styles,
+    pub easing: String,
 }
 
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
-    pub is_async: bool,
-    pub params: Vec<(String, String)>,
+    pub params: Vec<(String, String)>, // (name, type)
+    pub return_type: Option<String>,
     pub body: Vec<Expr>,
 }
 
@@ -40,50 +74,7 @@ pub enum Expr {
     If(String, String, Vec<Expr>),
     For(String, String, Vec<Expr>),
     Switch(String, Vec<(String, Vec<Expr>)>),
-}
-
-#[derive(Debug)]
-pub struct ComponentDef {
-    pub name: String,
-    pub params: Vec<(String, String)>,
-    pub body: Component,
-}
-
-#[derive(Debug, Clone)]
-pub struct Component {
-    pub name: String,
-    pub styles: Styles,
-    pub content: Option<String>,
-    pub children: Vec<Component>,
-    pub on_click: Option<String>,
-    pub data: Option<String>,
-    pub build: Option<(String, Component)>,
-    pub direction: Option<String>,
-    pub scroll: Option<String>,
-    pub current: Option<i32>,
-    pub items: Vec<Item>,
-    pub menu_icon: Option<(String, String)>,
-    pub actions: Vec<Component>,
-    pub src: Option<String>,
-    pub value: Option<String>,
-    pub options: Vec<String>,
-    pub on_change: Option<String>,
-    pub on_select: Option<i32>,
-    pub on_submit: Option<String>,
-    pub validation: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Item {
-    pub content: String,
-    pub icon: String,
-    pub on_click: String,
-    pub styles: Styles,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Styles {
-    pub props: HashMap<String, String>,
+    Fetch(String, String),
 }
 
 #[derive(Debug)]
@@ -102,335 +93,300 @@ pub struct TestCase {
 pub struct Assertion {
     pub target: String,
     pub method: String,
-    pub expected: String,
+    pub value: String,
 }
 
-pub fn parse_project(dir: &str) -> Result<AST, Box<pest::error::Error<Rule>>> {
-    let mut ast = AST {
-        pages: Vec::new(),
-        functions: HashMap::new(),
-        components: HashMap::new(),
-        tests: Vec::new(),
-    };
+pub fn parse_project(dir: &str) -> Result<AST, Box<dyn std::error::Error>> {
+    let mut ast = AST::default();
+    let project_file = std::fs::read_to_string(format!("{}/src/project.fr", dir))?;
+    let pairs = FrameParser::parse(Rule::file, &project_file)?.next().unwrap();
 
-    let root_content = fs::read_to_string(format!("{}/src/project.fr", dir))
-        .map_err(|e| pest::error::Error::new_from_span(pest::error::ErrorVariant::CustomError { message: e.to_string() }, pest::Span::new("", 0, 0).unwrap()))?;
-    let root_pairs = FrameParser::parse(Rule::file, &root_content)?;
-
-    for pair in root_pairs {
+    for pair in pairs.into_inner() {
         match pair.as_rule() {
-            Rule::page => ast.pages.push(parse_page(pair)),
+            Rule::vars => {
+                for var_pair in pair.into_inner() {
+                    if var_pair.as_rule() == Rule::ident {
+                        let name = var_pair.as_str().to_string();
+                        let value = var_pair.into_inner().next().unwrap().as_str().to_string();
+                        ast.vars.insert(name, value);
+                    }
+                }
+            }
+            Rule::i18n => {
+                for i18n_pair in pair.into_inner() {
+                    if i18n_pair.as_rule() == Rule::ident {
+                        let key = i18n_pair.as_str().to_string();
+                        let value = i18n_pair.into_inner().next().unwrap().as_str().to_string();
+                        ast.i18n.insert(key, value);
+                    }
+                }
+            }
+            Rule::import => {
+                let mut ident = None;
+                let mut alias = None;
+                let mut path = None;
+                for import_part in pair.into_inner() {
+                    match import_part.as_rule() {
+                        Rule::ident => {
+                            if ident.is_none() {
+                                ident = Some(import_part.as_str().to_string());
+                            } else {
+                                alias = Some(import_part.as_str().to_string());
+                            }
+                        }
+                        Rule::path => path = Some(import_part.as_str().to_string()),
+                        _ => {}
+                    }
+                }
+                let imports = ast.imports.entry(path.unwrap()).or_insert_with(Vec::new);
+                imports.push((ident.unwrap(), alias));
+            }
+            Rule::page => {
+                let mut page = Page {
+                    styles: Styles::default(),
+                    children: Vec::new(),
+                    ..Default::default()
+                };
+                for page_part in pair.into_inner() {
+                    match page_part.as_rule() {
+                        Rule::string => {
+                            if page.name.is_empty() {
+                                page.name = page_part.as_str().trim_matches('"').to_string();
+                            } else {
+                                page.route = page_part.as_str().trim_matches('"').to_string();
+                            }
+                        }
+                        Rule::call => {
+                            let call_str = parse_call(page_part);
+                            if page.before_enter.is_none() {
+                                page.before_enter = Some(call_str);
+                            } else {
+                                page.before_leave = Some(call_str);
+                            }
+                        }
+                        Rule::styles => page.styles = parse_styles(page_part),
+                        Rule::component => page.children.push(parse_component(page_part)),
+                        _ => {}
+                    }
+                }
+                ast.pages.push(page);
+            }
             Rule::fn_def => {
-                let func = parse_function(pair);
+                let mut func = Function {
+                    params: Vec::new(),
+                    body: Vec::new(),
+                    ..Default::default()
+                };
+                for fn_part in pair.into_inner() {
+                    match fn_part.as_rule() {
+                        Rule::ident => {
+                            if func.name.is_empty() {
+                                func.name = fn_part.as_str().to_string();
+                            } else if func.return_type.is_none() {
+                                func.return_type = Some(fn_part.as_str().to_string());
+                            } else {
+                                func.params.push((fn_part.as_str().to_string(), fn_part.into_inner().next().unwrap().as_str().to_string()));
+                            }
+                        }
+                        Rule::expr => func.body.push(parse_expr(fn_part)),
+                        _ => {}
+                    }
+                }
                 ast.functions.insert(func.name.clone(), func);
+            }
+            Rule::test_suite => {
+                let mut suite = TestSuite {
+                    name: String::new(),
+                    cases: Vec::new(),
+                };
+                for suite_part in pair.into_inner() {
+                    match suite_part.as_rule() {
+                        Rule::string => suite.name = suite_part.as_str().trim_matches('"').to_string(),
+                        Rule::test_case => {
+                            let mut case = TestCase {
+                                name: String::new(),
+                                assertions: Vec::new(),
+                            };
+                            for case_part in suite_part.into_inner() {
+                                match case_part.as_rule() {
+                                    Rule::string => case.name = case_part.as_str().trim_matches('"').to_string(),
+                                    Rule::assertion => {
+                                        let mut assertion = Assertion {
+                                            target: String::new(),
+                                            method: String::new(),
+                                            value: String::new(),
+                                        };
+                                        for assert_part in case_part.into_inner() {
+                                            match assert_part.as_rule() {
+                                                Rule::ident => {
+                                                    if assertion.target.is_empty() {
+                                                        assertion.target = assert_part.as_str().to_string();
+                                                    } else {
+                                                        assertion.method = assert_part.as_str().to_string();
+                                                    }
+                                                }
+                                                Rule::string | Rule::number => assertion.value = assert_part.as_str().to_string(),
+                                                _ => {}
+                                            }
+                                        }
+                                        case.assertions.push(assertion);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            suite.cases.push(case);
+                        }
+                        _ => {}
+                    }
+                }
+                ast.tests.push(suite);
             }
             _ => {}
         }
     }
-
-    let comp_dir = format!("{}/src/component", dir);
-    if Path::new(&comp_dir).exists() {
-        for entry in fs::read_dir(&comp_dir)? {
-            let path = entry?.path();
-            if path.extension().map_or(false, |ext| ext == "fr") {
-                let content = fs::read_to_string(&path)?;
-                let pairs = FrameParser::parse(Rule::component, &content)?;
-                for pair in pairs {
-                    let comp = parse_component(pair);
-                    ast.components.insert(comp.name.clone(), ComponentDef {
-                        name: comp.name.clone(),
-                        params: vec![("post".to_string(), "object".to_string())],
-                        body: comp,
-                    });
-                }
-            }
-        }
-    }
-
-    let test_dir = format!("{}/src/tests", dir);
-    if Path::new(&test_dir).exists() {
-        for entry in fs::read_dir(&test_dir)? {
-            let path = entry?.path();
-            if path.extension().map_or(false, |ext| ext == "fr") {
-                let content = fs::read_to_string(&path)?;
-                let pairs = FrameParser::parse(Rule::test_file, &content)?;
-                for pair in pairs {
-                    if pair.as_rule() == Rule::test_suite {
-                        ast.tests.push(parse_test_suite(pair));
-                    }
-                }
-            }
-        }
-    }
-
     Ok(ast)
 }
 
-fn parse_page(pair: pest::iterators::Pair<Rule>) -> Page {
-    let mut page = Page {
-        name: "".to_string(),
-        route: "".to_string(),
-        styles: Styles::default(),
-        children: Vec::new(),
-    };
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::string => {
-                if page.name.is_empty() { page.name = inner.as_str().trim_matches('"').to_string(); }
-                else { page.route = inner.as_str().trim_matches('"').to_string(); }
-            }
-            Rule::styles => page.styles = parse_styles(inner),
-            Rule::component => page.children.push(parse_component(inner)),
-            _ => {}
+fn parse_styles(pair: pest::iterators::Pair<Rule>) -> Styles {
+    let mut styles = Styles::default();
+    for style_pair in pair.into_inner() {
+        if style_pair.as_rule() == Rule::ident {
+            let key = style_pair.as_str().to_string();
+            let value = style_pair.into_inner().next().unwrap().as_str().to_string();
+            styles.props.insert(key, value);
         }
     }
-    page
-}
-
-fn parse_function(pair: pest::iterators::Pair<Rule>) -> Function {
-    let mut func = Function {
-        name: "".to_string(),
-        is_async: false,
-        params: Vec::new(),
-        body: Vec::new(),
-    };
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::ident => func.name = inner.as_str().to_string(),
-            Rule::async => func.is_async = true,
-            Rule::param => {
-                let mut param_name = "";
-                let mut param_type = "";
-                for p in inner.into_inner() {
-                    if p.as_rule() == Rule::ident {
-                        if param_name.is_empty() { param_name = p.as_str(); }
-                        else { param_type = p.as_str(); }
-                    }
-                }
-                func.params.push((param_name.to_string(), param_type.to_string()));
-            }
-            Rule::expr => func.body.push(parse_expr(inner)),
-            _ => {}
-        }
-    }
-    func
-}
-
-fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
-    match pair.as_rule() {
-        Rule::if_stmt => {
-            let mut cond1 = "";
-            let mut cond2 = "";
-            let mut body = Vec::new();
-            for inner in pair.into_inner() {
-                match inner.as_rule() {
-                    Rule::ident => {
-                        if cond1.is_empty() { cond1 = inner.as_str(); }
-                        else { cond2 = inner.as_str(); }
-                    }
-                    Rule::expr => body.push(parse_expr(inner)),
-                    _ => {}
-                }
-            }
-            Expr::If(cond1.to_string(), cond2.to_string(), body)
-        }
-        Rule::for_stmt => {
-            let mut items = "";
-            let mut item = "";
-            let mut body = Vec::new();
-            for inner in pair.into_inner() {
-                match inner.as_rule() {
-                    Rule::ident => {
-                        if items.is_empty() { items = inner.as_str(); }
-                        else { item = inner.as_str(); }
-                    }
-                    Rule::expr => body.push(parse_expr(inner)),
-                    _ => {}
-                }
-            }
-            Expr::For(items.to_string(), item.to_string(), body)
-        }
-        Rule::switch_stmt => {
-            let mut var = "";
-            let mut cases = Vec::new();
-            for inner in pair.into_inner() {
-                match inner.as_rule() {
-                    Rule::ident => var = inner.as_str(),
-                    Rule::case_stmt => {
-                        let mut value = "";
-                        let mut body = Vec::new();
-                        for case_inner in inner.into_inner() {
-                            match case_inner.as_rule() {
-                                Rule::string => value = case_inner.as_str().trim_matches('"'),
-                                Rule::expr => body.push(parse_expr(case_inner)),
-                                _ => {}
-                            }
-                        }
-                        cases.push((value.to_string(), body));
-                    }
-                    _ => {}
-                }
-            }
-            Expr::Switch(var.to_string(), cases)
-        }
-        Rule::call => Expr::Call(pair.as_str().to_string()),
-        Rule::expr => {
-            let mut parts = pair.into_inner();
-            if pair.as_str().contains("return") {
-                let var = parts.next().unwrap().as_str();
-                let value = parts.nth(1).unwrap().as_str();
-                Expr::Return(var.to_string(), value.to_string())
-            } else {
-                let left = parts.next().unwrap().as_str();
-                let op = parts.next().unwrap().as_str();
-                let right = parts.next().unwrap().as_str();
-                Expr::Operation(left.to_string(), op.to_string(), right.to_string())
-            }
-        }
-        _ => unreachable!(),
-    }
+    styles
 }
 
 fn parse_component(pair: pest::iterators::Pair<Rule>) -> Component {
-    let mut comp = Component {
-        name: pair.as_str().split(':').next().unwrap().to_string(),
-        styles: Styles::default(),
-        content: None,
-        children: Vec::new(),
-        on_click: None,
-        data: None,
-        build: None,
-        direction: None,
-        scroll: None,
-        current: None,
-        items: Vec::new(),
-        menu_icon: None,
-        actions: Vec::new(),
-        src: None,
-        value: None,
-        options: Vec::new(),
-        on_change: None,
-        on_select: None,
-        on_submit: None,
-        validation: None,
-    };
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::styles => comp.styles = parse_styles(inner),
-            Rule::content => comp.content = Some(inner.as_str().to_string()),
-            Rule::component => comp.children.push(parse_component(inner)),
-            Rule::on_click => comp.on_click = Some(inner.as_str().to_string()),
-            Rule::data => comp.data = Some(inner.as_str().to_string()),
+    let mut comp = Component::default();
+    for comp_part in pair.into_inner() {
+        match comp_part.as_rule() {
+            Rule::ident => comp.name = comp_part.as_str().to_string(),
+            Rule::styles => comp.styles = parse_styles(comp_part),
+            Rule::content => comp.content = Some(comp_part.into_inner().next().unwrap().as_str().to_string()),
+            Rule::children => comp.children = comp_part.into_inner().map(parse_component).collect(),
+            Rule::on_click => comp.on_click = Some(parse_call(comp_part.into_inner().next().unwrap())),
+            Rule::on_mount => comp.on_mount = Some(parse_call(comp_part.into_inner().next().unwrap())),
+            Rule::on_update => comp.on_update = Some(parse_call(comp_part.into_inner().next().unwrap())),
+            Rule::on_unmount => comp.on_unmount = Some(parse_call(comp_part.into_inner().next().unwrap())),
+            Rule::animate => {
+                let mut anim = Animation {
+                    kind: "default".to_string(),
+                    duration: 0,
+                    from: Styles::default(),
+                    to: Styles::default(),
+                    easing: "linear".to_string(),
+                };
+                for anim_part in comp_part.into_inner() {
+                    match anim_part.as_rule() {
+                        Rule::styles => {
+                            if anim.from.props.is_empty() {
+                                anim.from = parse_styles(anim_part);
+                            } else {
+                                anim.to = parse_styles(anim_part);
+                            }
+                        }
+                        Rule::number => anim.duration = anim_part.as_str().parse().unwrap(),
+                        Rule::string => anim.easing = anim_part.as_str().trim_matches('"').to_string(),
+                        _ => {}
+                    }
+                }
+                comp.animate = Some(anim);
+            }
+            Rule::props => {
+                for prop_pair in comp_part.into_inner() {
+                    if prop_pair.as_rule() == Rule::ident {
+                        let name = prop_pair.as_str().to_string();
+                        let type_ = prop_pair.into_inner().next().unwrap().as_str().to_string();
+                        let required = prop_pair.into_inner().any(|p| p.as_rule() == Rule::string && p.as_str() == "required");
+                        comp.props.insert(name, (type_, required));
+                    }
+                }
+            }
+            Rule::data => comp.data = Some(comp_part.into_inner().next().unwrap().as_str().to_string()),
             Rule::build => {
-                let mut param = "";
+                let mut param = String::new();
                 let mut body = None;
-                for b in inner.into_inner() {
-                    if b.as_rule() == Rule::ident { param = b.as_str(); }
-                    if b.as_rule() == Rule::component { body = Some(parse_component(b)); }
+                for build_part in comp_part.into_inner() {
+                    match build_part.as_rule() {
+                        Rule::ident => {
+                            if param.is_empty() {
+                                param = build_part.as_str().to_string();
+                            }
+                        }
+                        Rule::component => body = Some(parse_component(build_part)),
+                        _ => {}
+                    }
                 }
-                comp.build = Some((param.to_string(), body.unwrap()));
+                comp.build = Some((param, body.unwrap()));
             }
-            Rule::direction => comp.direction = Some(inner.as_str().trim_matches('"').to_string()),
-            Rule::scroll => comp.scroll = Some(inner.as_str().trim_matches('"').to_string()),
-            Rule::current => comp.current = Some(inner.as_str().parse().unwrap()),
-            Rule::item => comp.items.push(parse_item(inner)),
-            Rule::menu => {
-                let mut icon = "";
-                let mut click = "";
-                for m in inner.into_inner() {
-                    if m.as_rule() == Rule::string { icon = m.as_str().trim_matches('"'); }
-                    if m.as_rule() == Rule::call { click = m.as_str(); }
-                }
-                comp.menu_icon = Some((icon.to_string(), click.to_string()));
-            }
-            Rule::actions => {
-                for a in inner.into_inner() {
-                    comp.actions.push(parse_component(a));
-                }
-            }
-            Rule::src => comp.src = Some(inner.as_str().trim_matches('"').to_string()),
-            Rule::value => comp.value = Some(inner.as_str().trim_matches('"').to_string()),
-            Rule::options => comp.options = inner.into_inner().map(|o| o.as_str().trim_matches('"').to_string()).collect(),
-            Rule::on_change => comp.on_change = Some(inner.as_str().to_string()),
-            Rule::on_select => comp.on_select = Some(inner.as_str().parse().unwrap()),
-            Rule::on_submit => comp.on_submit = Some(inner.as_str().to_string()),
-            Rule::validation => comp.validation = Some(inner.as_str().trim_matches('"').to_string()),
             _ => {}
         }
     }
     comp
 }
 
-fn parse_item(pair: pest::iterators::Pair<Rule>) -> Item {
-    let mut item = Item {
-        content: "".to_string(),
-        icon: "".to_string(),
-        on_click: "".to_string(),
-        styles: Styles::default(),
-    };
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::content => item.content = inner.as_str().trim_matches('"').to_string(),
-            Rule::icon => item.icon = inner.as_str().trim_matches('"').to_string(),
-            Rule::on_click => item.on_click = inner.as_str().to_string(),
-            Rule::styles => item.styles = parse_styles(inner),
-            _ => {}
-        }
-    }
-    item
-}
-
-fn parse_styles(pair: pest::iterators::Pair<Rule>) -> Styles {
-    let mut styles = Styles::default();
-    for style in pair.into_inner() {
-        let mut key = "";
-        let mut value = "";
-        for prop in style.into_inner() {
-            if prop.as_rule() == Rule::ident { key = prop.as_str(); }
-            else { value = prop.as_str(); }
-        }
-        styles.props.insert(key.to_string(), value.to_string());
-    }
-    styles
-}
-
-fn parse_test_suite(pair: pest::iterators::Pair<Rule>) -> TestSuite {
-    let mut suite = TestSuite { name: "".to_string(), cases: Vec::new() };
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::string => suite.name = inner.as_str().trim_matches('"').to_string(),
-            Rule::test_case => suite.cases.push(parse_test_case(inner)),
-            _ => {}
-        }
-    }
-    suite
-}
-
-fn parse_test_case(pair: pest::iterators::Pair<Rule>) -> TestCase {
-    let mut case = TestCase { name: "".to_string(), assertions: Vec::new() };
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::string => case.name = inner.as_str().trim_matches('"').to_string(),
-            Rule::assertion => case.assertions.push(parse_assertion(inner)),
-            _ => {}
-        }
-    }
-    case
-}
-
-fn parse_assertion(pair: pest::iterators::Pair<Rule>) -> Assertion {
-    let mut target = "";
-    let mut method = "";
-    let mut expected = "";
-    for inner in pair.into_inner() {
-        match inner.as_rule() {
-            Rule::ident => {
-                if target.is_empty() { target = inner.as_str(); }
-                else { method = inner.as_str(); }
+fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
+    match pair.as_rule() {
+        Rule::expr => {
+            let mut inner = pair.into_inner();
+            let first = inner.next().unwrap();
+            match first.as_rule() {
+                Rule::return_stmt => {
+                    let var = first.into_inner().next().unwrap().as_str().to_string();
+                    let value = inner.next().unwrap().as_str().to_string();
+                    Expr::Return(var, value)
+                }
+                Rule::call => Expr::Call(parse_call(first)),
+                Rule::operation => {
+                    let left = first.as_str().to_string();
+                    let op = inner.next().unwrap().as_str().to_string();
+                    let right = inner.next().unwrap().as_str().to_string();
+                    Expr::Operation(left, op, right)
+                }
+                Rule::if_stmt => {
+                    let cond1 = first.into_inner().next().unwrap().as_str().to_string();
+                    let cond2 = inner.next().unwrap().as_str().to_string();
+                    let body = inner.next().unwrap().into_inner().map(parse_expr).collect();
+                    Expr::If(cond1, cond2, body)
+                }
+                Rule::for_stmt => {
+                    let items = first.into_inner().next().unwrap().as_str().to_string();
+                    let item = inner.next().unwrap().as_str().to_string();
+                    let body = inner.next().unwrap().into_inner().map(parse_expr).collect();
+                    Expr::For(items, item, body)
+                }
+                Rule::switch_stmt => {
+                    let var = first.into_inner().next().unwrap().as_str().to_string();
+                    let cases = inner.map(|case| {
+                        let value = case.into_inner().next().unwrap().as_str().trim_matches('"').to_string();
+                        let body = case.into_inner().map(parse_expr).collect();
+                        (value, body)
+                    }).collect();
+                    Expr::Switch(var, cases)
+                }
+                Rule::fetch => {
+                    let url = first.into_inner().next().unwrap().as_str().to_string();
+                    let options = inner.next().unwrap().as_str().to_string();
+                    Expr::Fetch(url, options)
+                }
+                _ => unreachable!(),
             }
-            Rule::string | Rule::number => expected = inner.as_str(),
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn parse_call(pair: pest::iterators::Pair<Rule>) -> String {
+    let mut call_str = String::new();
+    for part in pair.into_inner() {
+        match part.as_rule() {
+            Rule::ident => call_str.push_str(part.as_str()),
+            Rule::arg => call_str.push_str(&format!("({})", part.as_str())),
             _ => {}
         }
     }
-    Assertion { target: target.to_string(), method: method.to_string(), expected: expected.to_string() }
+    call_str
 }

@@ -6,15 +6,45 @@ pub trait Component {
 }
 
 pub struct AppBar {
-    pub title: String,
+    pub title: Option<String>,
     pub styles: Styles,
+    pub menu: Option<(String, Box<dyn Fn()>)>, // (icon, on_click)
+    pub actions: Vec<Box<dyn Component>>,
 }
 
 impl Component for AppBar {
-    fn render(&self, canvas: &mut Canvas, styles: &Styles, _animations: &mut Vec<crate::runtime::Animation>) {
+    fn render(&self, canvas: &mut Canvas, styles: &Styles, animations: &mut Vec<crate::runtime::Animation>) {
         let x = styles.get_px("x", 0);
         let y = styles.get_px("y", 0);
-        canvas.draw_text(&self.title, x, y, 0xFFFFFF);
+        let width = styles.get_px("width", 800);
+        
+        // Draw background
+        canvas.draw_rect(x, y, width, styles.get_px("height", 50), 0x333333);
+
+        // Draw menu icon if present
+        if let Some((icon, on_click)) = &self.menu {
+            canvas.draw_svg(icon, x + 10, y + 15);
+            on_click();
+        }
+
+        // Draw title if present
+        if let Some(title) = &self.title {
+            canvas.draw_text(title, x + 50, y + 15, 0xFFFFFF);
+        }
+
+        // Draw actions
+        let mut action_x = width - (self.actions.len() as i32 * 40);
+        for action in &self.actions {
+            action.render(canvas, &Styles {
+                props: {
+                    let mut props = styles.props.clone();
+                    props.insert("x".to_string(), (x + action_x).to_string());
+                    props.insert("y".to_string(), (y + 15).to_string());
+                    props
+                }
+            }, animations);
+            action_x += 40;
+        }
     }
 }
 
@@ -49,7 +79,8 @@ impl Component for Image {
 }
 
 pub struct Button {
-    pub content: String,
+    pub content: Option<String>,
+    pub icon: Option<String>,
     pub styles: Styles,
     pub on_click: Box<dyn Fn()>,
 }
@@ -58,7 +89,12 @@ impl Component for Button {
     fn render(&self, canvas: &mut Canvas, styles: &Styles, _animations: &mut Vec<crate::runtime::Animation>) {
         let x = styles.get_px("x", 0);
         let y = styles.get_px("y", 0);
-        canvas.draw_text(&self.content, x, y, 0x00FF00);
+        if let Some(content) = &self.content {
+            canvas.draw_text(content, x, y, 0x00FF00);
+        }
+        if let Some(icon) = &self.icon {
+            canvas.draw_svg(icon, x, y);
+        }
         (self.on_click)();
     }
 }
@@ -107,19 +143,6 @@ impl Component for BottomBar {
             (item.on_click)();
             offset += 100;
         }
-    }
-}
-
-pub struct Card {
-    pub content: String,
-    pub styles: Styles,
-}
-
-impl Component for Card {
-    fn render(&self, canvas: &mut Canvas, styles: &Styles, _animations: &mut Vec<crate::runtime::Animation>) {
-        let x = styles.get_px("x", 0);
-        let y = styles.get_px("y", 0);
-        canvas.draw_text(&self.content, x, y, 0xFFFFFF);
     }
 }
 
@@ -178,13 +201,8 @@ impl Component for Form {
 
 impl Form {
     fn validate(&self) -> bool {
-        // Simple validation based on regex or "required"
         self.validation == "required" && !self.children.iter().any(|c| c.as_ref().to_string().is_empty())
     }
-}
-
-impl StyledComponent for Form {
-    fn styles(&self) -> Styles { self.styles.clone() }
 }
 
 pub trait StyledComponent {
@@ -201,6 +219,6 @@ impl StyledComponent for Image { fn styles(&self) -> Styles { self.styles.clone(
 impl StyledComponent for Button { fn styles(&self) -> Styles { self.styles.clone() } }
 impl<'a> StyledComponent for List<'a> { fn styles(&self) -> Styles { self.styles.clone() } }
 impl StyledComponent for BottomBar { fn styles(&self) -> Styles { self.styles.clone() } }
-impl StyledComponent for Card { fn styles(&self) -> Styles { self.styles.clone() } }
 impl StyledComponent for Input { fn styles(&self) -> Styles { self.styles.clone() } }
 impl StyledComponent for Dropdown { fn styles(&self) -> Styles { self.styles.clone() } }
+impl StyledComponent for Form { fn styles(&self) -> Styles { self.styles.clone() } }

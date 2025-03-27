@@ -15,9 +15,18 @@ fn calculate: (var1:int, var2:int) => {
 
 const var = "john deo" // this i variable
 
+fn: fetch_posts:() => {
+  fetch:("https://api.example.com/posts", "method:GET")
+}
+
+fn: update_text:() => {
+  return text = "Posts loaded"
+}
+
 page: { 
   name: "Profile" 
   route: "/profile" 
+  before_enter: "fetch_posts"
   styles: { width: 100% height: 100% } 
   children: [
     app_bar: { 
@@ -25,8 +34,8 @@ page: {
       title: "Profile" 
       styles: { width: 100% height: 50dp }
       actions: [
-        button: { icon: "search" on_click: ()=>{}  },
-        button: { icon: "settings" on_click: ()=>{}  },
+        button: { icon: "search"  },
+        button: { icon: "settings" on_click: "/profile"  },
       ]
     }
     row: {
@@ -75,7 +84,7 @@ page: {
       build:(post) => { 
         container: {
           styles: { width: 100% height: 150dp }
-          child: Card:(post)
+          child: Card: { content: "Custom Card Content" }
         } 
       }
     }

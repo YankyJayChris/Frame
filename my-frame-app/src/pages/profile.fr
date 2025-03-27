@@ -11,6 +11,16 @@ fn: update:(value:string) => {
   }
 }
 
+fn: fetch_posts:() => {
+  fetch:("https://api.example.com/posts", "method:GET")
+}
+
+fn: update_text:() => {
+  return text = "Posts loaded"
+}
+
+:vars { $primary: "#FF0000"; $spacing: "10dp" }
+
 page: {
   name: "Profile"
   route: "/profile"
@@ -24,7 +34,68 @@ page: {
       children: [
         input: { value: "Name" on_change: "updateName:($value)" }
         button: { content: "Submit" on_click: "submit:()" }
+        Button: { content: "Back to Home" on_click: "/home" }
+        Button: { content: "Go Back" on_click: "go_back:()" }
+        Text: {
+            content: "Loading..."
+            on_mount: "fetch_posts"
+            on_update: "update_text"
+            styles: { color: "$primary"; margin: "$spacing" }
+            animate: { from: { opacity: "0" } to: { opacity: "1" } duration: 500ms easing: "ease-in" }
+        }
       ]
     }
+    list: { 
+      direction: "column" 
+      scroll: "vertical"
+      data: posts 
+      styles: { width: 100% height: 100% } 
+      build:(post) => { 
+        container: {
+          styles: { width: 100% height: 150dp }
+          child: Card:(post)
+        } 
+      }
+    }
+    bottom_navigation_bar: { 
+      current: 1
+      items: [
+        item: { 
+          on_click: navigate("home")
+          styles: { width: 20px height: 20px }
+          content: "Home"
+          icon: "home"
+        }
+        item: { 
+          on_click: navigate("home")
+          styles: { width: 20px height: 20px }
+          content: "services"
+          icon: "services"
+        }
+        item: { 
+          on_click: navigate("home")
+          styles: { width: 20px height: 20px }
+          content: "profile"
+          icon: "profile"
+        }
+      ] 
+    }
+  ]
+}
+
+fn: go_back:() => {
+  self.go_back()
+}
+
+Card: {
+  props: {
+    content: string = "new post",
+    count: number = 0,
+    active: bool = false
+  }
+  styles: { width: "200px", border: "1px solid #FFF" }
+  children: [
+    Text: { content: "$props.content" }
+    Button: { content: "Click Me" on_click: "log:(\"Clicked\")" }
   ]
 }

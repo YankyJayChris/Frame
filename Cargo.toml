@@ -1,5 +1,5 @@
 [package]
-name = "frame-core"
+name = "frame"
 version = "0.1.0"
 edition = "2021"
 
@@ -19,13 +19,20 @@ rusqlite = "0.31"          # State persistence
 git2 = "0.18"              # Git integration
 websocket = "0.27"         # Hot reload server
 flate2 = "1.0"             # Asset compression
+softbuffer = "0.4"         # Canvas rendering (from previous)
+fontdue = "0.7"            # Font rendering (from previous)
+lazy_static = "1.4"        # Lazy statics (from previous)
+minifier = "0.0.43"        # Minification (from previous)
+notify = "6.1"             # File watching (for build.rs)
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"               # Android native plugins
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc = "0.2"               # iOS native plugins
 
 [lib]
-name = "frame_core"
+name = "frame"
 path = "src/lib.rs"
 
 [[bin]]
