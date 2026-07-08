@@ -1,50 +1,9 @@
-// frame/src/parser/frame.pest
-file = { SOI ~ (vars | i18n | import | page | fn_def | component | test_suite)* ~ EOI }
-
-vars = { ":vars" ~ "{" ~ (ident ~ ":" ~ value ~ ","?)* ~ "}" }
-i18n = { ":i18n" ~ "{" ~ (ident ~ ":" ~ string ~ ","?)* ~ "}" }
-import = { "import" ~ path ~ (ident ~ ("as" ~ ident)?)? }
-
-page = { "page" ~ ":" ~ "{" ~ (string | call | styles | component)* ~ "}" }
-fn_def = { "fn" ~ ident ~ ":" ~ "(" ~ (ident ~ ":" ~ type_name ~ ","?)* ~ ")" ~ (":" ~ type_name)? ~ "=>" ~ "{" ~ expr* ~ "}" }
-component = { ident ~ ":" ~ "{" ~ (styles | content | children | on_click | on_touch_start | on_touch_move | on_touch_end | on_touch_cancel | on_mount | on_update | on_unmount | animate | props | data | build)* ~ "}" }
-
-styles = { "styles" ~ ":" ~ "{" ~ (ident ~ ":" ~ value ~ ","?)* ~ "}" }
-content = { "content" ~ ":" ~ value }
-children = { "children" ~ ":" ~ "[" ~ (component ~ ","?)* ~ "]" }
-on_click = { "on_click" ~ ":" ~ call }
-on_touch_start = { "on_touch_start" ~ ":" ~ call }
-on_touch_move = { "on_touch_move" ~ ":" ~ call }
-on_touch_end = { "on_touch_end" ~ ":" ~ call }
-on_touch_cancel = { "on_touch_cancel" ~ ":" ~ call }
-on_mount = { "on_mount" ~ ":" ~ call }
-on_update = { "on_update" ~ ":" ~ call }
-on_unmount = { "on_unmount" ~ ":" ~ call }
-animate = { "animate" ~ ":" ~ "{" ~ (ident | number | styles | string)* ~ "}" }
-props = { "props" ~ ":" ~ "{" ~ (ident ~ ":" ~ type_name ~ (string { "required" })? ~ ","?)* ~ "}" }
-data = { "data" ~ ":" ~ value }
-build = { "build" ~ ":" ~ ident ~ "=>" ~ component }
-
-test_suite = { "describe" ~ ":" ~ string ~ "=>" ~ "{" ~ test_case* ~ "}" }
-test_case = { "it" ~ string ~ "=>" ~ "{" ~ assertion* ~ "}" }
-assertion = { "assert" ~ ident ~ ident ~ (string | number) }
-
-expr = { return_stmt | call | operation | if_stmt | for_stmt | switch_stmt | fetch }
-return_stmt = { "return" ~ ident ~ "=" ~ value }
-call = { ident ~ "(" ~ arg* ~ ")" }
-arg = { (string | ident | number) ~ ","? }
-operation = { value ~ ("+" | "-" | "*" | "/") ~ value }
-if_stmt = { "if" ~ value ~ value ~ "{" ~ expr* ~ "}" }
-for_stmt = { "for" ~ ident ~ "in" ~ ident ~ "{" ~ expr* ~ "}" }
-switch_stmt = { "switch" ~ ident ~ "{" ~ (string ~ "=>" ~ expr*)* ~ "}" }
-fetch = { "fetch" ~ string ~ "{" ~ value ~ "}" }
-
-ident = { ('a'..'z' | 'A'..'Z' | '_') ~ ('a'..'z' | 'A'..'Z' | '0'..'9' | '_')* }
-type_name = { ident }
-value = { string | number | ident }
-string = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
-number = { "-"? ~ ('0'..'9')+ ~ ("." ~ ('0'..'9')+)? }
-path = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
-
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n" }
+// ============================================================================
+// DEPRECATED — this file is an early sketch and is no longer the canonical
+// Frame grammar.
+//
+// The canonical, complete PEG grammar is:
+//   src/parser/grammar.pest
+//
+// Do not add rules here. All grammar work should go into grammar.pest.
+// ============================================================================

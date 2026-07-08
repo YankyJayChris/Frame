@@ -1,80 +1,777 @@
-WHITESPACE = _{ " " | "\n" | "\t" }
-COMMENT = _{ "//" ~ ANY* ~ NEWLINE }
+// ============================================================================
+// Frame (.fr) Language — Complete PEG Grammar
+// Used with pest_derive in src/parser/mod.rs
+// ============================================================================
 
-ident = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-string = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
-number = { ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
-unit = { "dp" | "%" | "px" | "ms" }
-var = { "$" ~ ident }
-path = { "\"" ~ (!"\"" ~ (ASCII_ALPHANUMERIC | "/" | "." | "-"))* ~ "\"" }
+// ── Whitespace & Comments (silent) ──────────────────────────────────────────
 
-file = { (import | page | fn_def | vars | i18n | component)* }
-import = { "import" ~ ("{" ~ ident ~ ("as" ~ ident)? ~ "}")? ~ path }
-page = { "page:" ~ "{" ~ "name:" ~ string ~ "route:" ~ string ~ ("before_enter:" ~ call)? ~ ("before_leave:" ~ call)? ~ ("lazy:" ~ string)? ~ "styles:" ~ styles ~ "children:" ~ "[" ~ component* ~ "]" ~ "}" }
-fn_def = { "fn" ~ ident ~ ":" ~ ("async")? ~ "(" ~ (ident ~ ":" ~ ident ~ ",")* ~ (ident ~ ":" ~ ident)? ~ ")" ~ "=>" ~ "{" ~ expr* ~ "}" }
-vars = { ":vars" ~ "{" ~ (ident ~ ":" ~ (string | number ~ unit?) ~ ";")* ~ "}" }
-i18n = { ":i18n" ~ "{" ~ (ident ~ ":" ~ string ~ ";")* ~ "}" }
-expr = { 
-    "return" ~ ident ~ "=" ~ (call | ident | number | string | translate) | 
-    call | 
-    (ident ~ ("+" | "-") ~ ident) | 
-    if_stmt | 
-    for_stmt | 
-    switch_stmt | 
-    fetch 
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n"? }
+
+// ── Atomic terminals ─────────────────────────────────────────────────────────
+
+/// Plain identifier: starts with letter or underscore, then alphanum/_
+ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+/// PascalCase identifier for component/store names
+pascal_ident = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+/// Any identifier (lower or Pascal), used where both are valid
+any_ident = _{ ident }
+
+/// Double-quoted string (may contain interpolated $var or $state.field)
+string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+/// Integer literal
+integer = @{ "-"? ~ ASCII_DIGIT+ }
+
+/// Floating-point literal
+float = @{ "-"? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+
+/// Number — float first so "1.5" doesn't parse as int "1"
+number = _{ float | integer }
+
+/// Dimension value: number followed by optional unit
+dimension = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ ("dp" | "sp" | "px" | "%" | "ms" | "s")? }
+
+/// Boolean literal
+bool_lit = @{ "true" | "false" }
+
+/// Null literal
+null_lit = @{ "null" }
+
+/// Variable reference: $name
+dollar_var = @{ "$" ~ ident ~ ("." ~ ident)* }
+
+// ============================================================================
+// TOP-LEVEL FILE
+// ============================================================================
+
+/// Entry point: a .fr file is a sequence of top-level declarations
+file = { SOI ~ top_level_decl* ~ EOI }
+
+top_level_decl = _{
+    vars_block
+  | i18n_block
+  | store_block
+  | import_decl
+  | const_decl
+  | breakpoints_block
+  | typography_block
+  | page_decl
+  | component_decl
+  | fn_def
+  | test_suite
 }
-if_stmt = { "if:" ~ ident ~ "===" ~ ident ~ "{" ~ expr* ~ "}" }
-for_stmt = { "for:" ~ ident ~ "as" ~ ident ~ "{" ~ expr* ~ "}" }
-switch_stmt = { "switch:" ~ ident ~ "{" ~ (case_stmt)* ~ "}" }
-case_stmt = { "case:" ~ string ~ expr* }
-call = { ("wait:")? ~ ident ~ ":(" ~ (arg ~ ",")* ~ arg? ~ ")" }
-arg = { string | number | translate | "{" ~ (ident ~ ":" ~ string ~ ",")* ~ (ident ~ ":" ~ string)? ~ "}" }
-translate = { "t:" ~ string }
-fetch = { "fetch:(" ~ string ~ "," ~ string ~ ")" }
 
-component = { 
-    ("component")? ~ ident ~ ":" ~ "{" ~ 
-        ("styles:" ~ styles)? ~ 
-        ("content:" ~ (var | string | translate | component))? ~ 
-        ("children:" ~ "[" ~ component* ~ "]")? ~ 
-        ("on_click:" ~ call)? ~ 
-        ("on_mount:" ~ call)? ~ 
-        ("on_update:" ~ call)? ~ 
-        ("on_unmount:" ~ call)? ~ 
-        ("data:" ~ ident)? ~ 
-        ("build:" ~ "(" ~ ident ~ ":" ~ ident ~ ")" ~ "=>" ~ "{" ~ component ~ "}")? ~ 
-        ("direction:" ~ string)? ~ 
-        ("scroll:" ~ string)? ~ 
-        ("current:" ~ number)? ~ 
-        ("items:" ~ "[" ~ item* ~ "]")? ~ 
-        ("menu:" ~ "{" ~ "icon:" ~ "{" ~ "icon:" ~ string ~ "on_click:" ~ call ~ "}" ~ "}")? ~ 
-        ("actions:" ~ "[" ~ component* ~ "]")? ~ 
-        ("src:" ~ string)? ~
-        ("value:" ~ string)? ~
-        ("options:" ~ "[" ~ string* ~ "]")? ~
-        ("on_change:" ~ call)? ~
-        ("on_select:" ~ number)? ~
-        ("on_submit:" ~ call)? ~
-        ("validation:" ~ string)? ~
-        ("title:" ~ string)? ~
-        ("icon:" ~ string)? ~
-        ("lazy:" ~ string)? ~
-        ("props:" ~ "{" ~ (ident ~ ":" ~ ident ~ ("required:" ~ string)? ~ ",")* ~ (ident ~ ":" ~ ident ~ ("required:" ~ string)?)? ~ "}")? ~
-        ("animate:" ~ "{" ~ "from:" ~ styles ~ "to:" ~ styles ~ "duration:" ~ number ~ unit ~ "easing:" ~ string ~ "}")? ~
-        ("error_boundary:" ~ "{" ~ "fallback:" ~ component ~ "}")?
-    "}" 
-}
-item = { 
-    "item:" ~ "{" ~ 
-        "content:" ~ string ~ 
-        "icon:" ~ string ~ 
-        "on_click:" ~ call ~ 
-        "styles:" ~ styles ~
-    "}" 
-}
-styles = { "{" ~ (ident ~ ":" ~ (number ~ unit? | string | var) ~ ";")* ~ "}" }
+// ============================================================================
+// IMPORTS
+// ============================================================================
 
-test_file = { (test_suite | fn_def)* }
-test_suite = { "describe:" ~ string ~ "=>" ~ "{" ~ test_case* ~ "}" }
-test_case = { "it:" ~ string ~ "=>" ~ "{" ~ assertion* ~ "}" }
-assertion = { "expect:" ~ ident ~ "." ~ ident ~ ":(" ~ (string | number) ~ ")" }
+/// import { Name } "path"
+/// import { Name as Alias } "path"
+/// import { Name, Other as Alias } "path"
+import_decl = {
+    "import" ~ "{" ~ import_name_list ~ "}" ~ string
+}
+
+import_name_list = { import_name ~ ("," ~ import_name)* ~ ","? }
+
+import_name = { ident ~ ("as" ~ ident)? }
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// const name = value
+const_decl = { "const" ~ ident ~ "=" ~ const_value }
+
+const_value = _{ string | float | integer | bool_lit | null_lit }
+
+// ============================================================================
+// :vars BLOCK
+// ============================================================================
+
+/// :vars { $primary: "#FF0000"; $spacing: "10dp" }
+vars_block = { ":vars" ~ "{" ~ vars_entry* ~ "}" }
+
+vars_entry = { (dollar_var | ident) ~ ":" ~ (string | dimension | integer | float) ~ ";"? }
+
+// ============================================================================
+// :i18n BLOCK
+// ============================================================================
+
+/// :i18n { welcome: "Welcome"; logout: "Log out" }
+i18n_block = { ":i18n" ~ "{" ~ i18n_entry* ~ "}" }
+
+i18n_entry = { ident ~ ":" ~ string ~ ";"? }
+
+// ============================================================================
+// :breakpoints BLOCK
+// ============================================================================
+
+/// :breakpoints { sm: 360dp  md: 600dp ... }
+breakpoints_block = { ":breakpoints" ~ "{" ~ breakpoint_entry* ~ "}" }
+
+breakpoint_entry = { ident ~ ":" ~ dimension }
+
+// ============================================================================
+// :typography BLOCK
+// ============================================================================
+
+/// :typography { headline: { font_size: 24sp  font_weight: "bold" } }
+typography_block = { ":typography" ~ "{" ~ typography_entry* ~ "}" }
+
+typography_entry = { ident ~ ":" ~ "{" ~ typography_prop* ~ "}" }
+
+typography_prop = {
+    "font_size"      ~ ":" ~ dimension
+  | "font_weight"   ~ ":" ~ (string | ident)
+  | "font_family"   ~ ":" ~ string
+  | "line_height"   ~ ":" ~ dimension
+  | "letter_spacing" ~ ":" ~ dimension
+  | "color"         ~ ":" ~ (string | dollar_var)
+  | breakpoint_override  // allow @bp overrides inside typography entries
+}
+
+// ============================================================================
+// :store BLOCK
+// ============================================================================
+
+/// :store StoreName { fields, persist:, fn actions }
+store_block = {
+    ":store" ~ ident ~ "{" ~ store_member* ~ "}"
+}
+
+store_member = _{
+    store_fn
+  | persist_block
+  | store_field
+}
+
+/// field_name: type = default_value
+store_field = {
+    ident ~ ":" ~ type_name ~ ("=" ~ expr)?
+}
+
+/// persist: { field: secure }
+persist_block = { "persist:" ~ "{" ~ persist_entry* ~ "}" }
+
+persist_entry = { ident ~ ":" ~ ("secure" | "local") }
+
+/// fn actionName: (params) => { body }   — sync or async
+store_fn = { "fn" ~ ident ~ ":" ~ ("async")? ~ fn_params ~ "=>" ~ "{" ~ stmt* ~ "}" }
+
+// ============================================================================
+// FUNCTION DEFINITIONS (top-level)
+// ============================================================================
+
+/// fn Name: (params) => { body }
+/// fn Name: async (params) => { body }
+fn_def = {
+    "fn" ~ ident ~ ":" ~ ("async")? ~ fn_params ~ "=>" ~ "{" ~ stmt* ~ "}"
+}
+
+fn_params = { "(" ~ (param ~ ","?)* ~ ")" }
+
+param = { ident ~ ":" ~ type_name }
+
+type_name = { "int" | "float" | "bool" | "string" | "object" | "list" | "null" | ident }
+
+// ============================================================================
+// STATEMENTS
+// ============================================================================
+
+stmt = _{
+    wait_fetch_stmt
+  | wait_call_stmt
+  | assign_stmt
+  | if_stmt
+  | for_stmt
+  | switch_stmt
+  | try_catch_stmt
+  | return_stmt
+  | call_stmt
+}
+
+/// x = expr
+assign_stmt = { ident ~ "=" ~ expr }
+
+/// return expr
+return_stmt = { "return" ~ expr }
+
+/// if expr { stmts } else { stmts }
+if_stmt = {
+    "if" ~ expr ~ "{" ~ stmt* ~ "}" ~
+    ("else" ~ "{" ~ stmt* ~ "}")?
+}
+
+/// for item in list_expr { stmts }
+for_stmt = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ stmt* ~ "}" }
+
+/// switch expr { case "val" => { stmts } ... }
+switch_stmt = { "switch" ~ expr ~ "{" ~ switch_case* ~ "}" }
+
+switch_case = { "case" ~ expr ~ "=>" ~ "{" ~ stmt* ~ "}" }
+
+/// try { stmts } catch (err) { stmts } with optional finally { stmts }
+try_catch_stmt = {
+    "try" ~ "{" ~ stmt* ~ "}" ~
+    "catch" ~ "(" ~ ident ~ ")" ~ "{" ~ stmt* ~ "}" ~
+    ("finally" ~ "{" ~ stmt* ~ "}")?
+}
+
+/// wait:fetch(url, opts) with optional .then/.catch
+wait_fetch_stmt = { ident ~ "=" ~ wait_fetch_expr }
+
+/// wait:FuncOrStore(args)  — async call statement (no assignment)
+wait_call_stmt = { "wait:" ~ ident ~ ("." ~ ident)? ~ "(" ~ call_args ~ ")" }
+
+/// Regular function call statement
+call_stmt = { ident ~ ":" ~ "(" ~ call_args ~ ")" }
+
+// ============================================================================
+// EXPRESSIONS
+// ============================================================================
+
+expr = { null_coalesce_expr }
+
+/// a ?? b
+null_coalesce_expr = { compare_expr ~ ("??" ~ compare_expr)* }
+
+/// comparisons
+compare_expr = { add_expr ~ (compare_op ~ add_expr)* }
+
+compare_op = _{ "==" | "!=" | "<=" | ">=" | "<" | ">" | "&&" | "||" }
+
+add_expr = { mul_expr ~ (("+"|"-") ~ mul_expr)* }
+
+mul_expr = { unary_expr ~ (("*"|"/"|"%") ~ unary_expr)* }
+
+unary_expr = _{ primary_expr }
+
+/// Primary expressions: literals, calls, navigations, etc.
+primary_expr = _{
+    wait_fetch_expr
+  | lambda_expr
+  | safe_nav_expr
+  | method_call_expr
+  | wait_call_expr
+  | func_call_expr
+  | navigate_expr
+  | store_field_expr
+  | state_field_expr
+  | dollar_var
+  | bool_lit
+  | null_lit
+  | float
+  | integer
+  | string
+  | dimension
+  | paren_expr
+  | ident
+}
+
+paren_expr = { "(" ~ expr ~ ")" }
+
+/// State field: state.field
+state_field_expr = @{ "state" ~ "." ~ ident ~ ("." ~ ident)* }
+
+/// Store field: StoreName.field or StoreName.field.nested
+store_field_expr = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* ~ "." ~ ident ~ ("." ~ ident)* }
+
+/// Safe navigation: obj?.field?.nested
+safe_nav_expr = { ident ~ ("?." ~ ident)+ }
+
+/// Method call: value.method(args)
+method_call_expr = { primary_expr_base ~ "." ~ ident ~ "(" ~ call_args ~ ")" }
+
+primary_expr_base = _{
+    dollar_var
+  | state_field_expr
+  | store_field_expr
+  | ident
+}
+
+/// Regular function call: name:(args) or name(args)
+func_call_expr = { ident ~ ":"? ~ "(" ~ call_args ~ ")" }
+
+/// wait:name(args) or wait:StoreName.action(args)
+wait_call_expr = { "wait:" ~ ident ~ ("." ~ ident)? ~ "(" ~ call_args ~ ")" }
+
+/// navigate("/path")
+navigate_expr = { "navigate" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_back()
+navigate_back_expr = { "navigate_back" ~ "(" ~ ")" }
+
+/// Lambda: (param) => { body } or (param, param2) => { body }
+lambda_expr = { "(" ~ lambda_params ~ ")" ~ "=>" ~ "{" ~ stmt* ~ "}" }
+
+lambda_params = { (ident ~ ","?)* }
+
+call_args = { (expr ~ ","?)* }
+
+// ============================================================================
+// wait:fetch EXPRESSION
+// ============================================================================
+
+/// wait:fetch("url", { options }) with optional .then/.catch chaining
+wait_fetch_expr = {
+    "wait:fetch" ~ "(" ~ expr ~ ("," ~ fetch_options)? ~ ")" ~
+    then_chain?
+}
+
+fetch_options = { "{" ~ fetch_option* ~ "}" }
+
+fetch_option = _{
+    fetch_method
+  | fetch_headers
+  | fetch_body
+  | fetch_timeout
+}
+
+fetch_method  = { "method" ~ ":" ~ (string | ident) }
+fetch_headers = { "headers" ~ ":" ~ "{" ~ header_entry* ~ "}" }
+header_entry  = { ident ~ ":" ~ (string | dollar_var) }
+fetch_body    = { "body" ~ ":" ~ "{" ~ body_entry* ~ "}" }
+body_entry    = { ident ~ ":" ~ expr }
+fetch_timeout = { "timeout" ~ ":" ~ integer }
+
+/// .then((data) => { ... }).catch((err) => { ... })
+then_chain = {
+    ".then" ~ "(" ~ lambda_expr ~ ")" ~
+    (".catch" ~ "(" ~ lambda_expr ~ ")")?
+}
+
+// ============================================================================
+// PAGE DECLARATION
+// ============================================================================
+
+/// page: { name: "..." route: "..." ... children: [...] }
+page_decl = {
+    "page:" ~ "{" ~ page_prop* ~ "}"
+}
+
+page_prop = _{
+    page_name
+  | page_route
+  | page_before_enter
+  | page_before_leave
+  | styles_block
+  | state_decl
+  | children_block
+  | component_node     // allow loose top-level nodes inside page
+}
+
+page_name         = { "name"         ~ ":" ~ string }
+page_route        = { "route"        ~ ":" ~ string }
+page_before_enter = { "before_enter" ~ ":" ~ string }
+page_before_leave = { "before_leave" ~ ":" ~ string }
+
+// ── Page/component state block ────────────────────────────────────────────────
+state_decl = { "state:" ~ "{" ~ state_field* ~ "}" }
+
+state_field = { ident ~ ":" ~ type_name ~ ("=" ~ expr)? }
+
+// ============================================================================
+// COMPONENT DEFINITION  (component Name: { ... })
+// ============================================================================
+
+/// component ProfileCard: { props: { ... } styles: { ... } children: [...] }
+component_decl = {
+    "component" ~ ident ~ ":" ~ "{" ~ component_def_prop* ~ "}"
+}
+
+component_def_prop = _{
+    props_block
+  | state_decl
+  | styles_block
+  | children_block
+  | event_prop
+  | animate_block
+  | show_if_prop
+  | component_node
+}
+
+props_block = { "props:" ~ "{" ~ prop_def* ~ "}" }
+
+prop_def = { ident ~ ":" ~ type_name ~ ("=" ~ expr)? ~ ","? }
+
+// ============================================================================
+// COMPONENT NODES  (inside children: [...] or page body)
+// ============================================================================
+
+children_block = { "children:" ~ "[" ~ child_item* ~ "]" }
+
+child_item = _{ component_node ~ ","? }
+
+/// Any UI node — built-in or custom component invocation
+component_node = {
+    component_kind ~ ":" ~ "{" ~ component_prop* ~ "}"
+  | component_kind ~ ":" ~ "(" ~ call_args ~ ")"      // invocation: Card:(post)
+}
+
+/// All supported component kinds
+component_kind = _{
+    builtin_kind | pascal_ident
+}
+
+builtin_kind = _{
+    "text"
+  | "button"
+  | "image"
+  | "icon"
+  | "row"
+  | "column"
+  | "container"
+  | "stack"
+  | "list"
+  | "input"
+  | "dropdown"
+  | "form"
+  | "app_bar"
+  | "bottom_navigation_bar"
+  | "scaffold"
+  | "card"
+  | "divider"
+  | "spacer"
+  | "modal"
+  | "scroll_view"
+  | "grid"
+  | "plugin"
+  | "item"
+}
+
+/// Properties that can appear inside a component node block
+component_prop = _{
+    styles_block
+  | children_block
+  | animate_block
+  | event_prop
+  | show_if_prop
+  | data_prop
+  | build_prop
+  | content_prop
+  | src_prop
+  | value_prop
+  | title_prop
+  | icon_prop
+  | direction_prop
+  | columns_prop
+  | current_prop
+  | items_prop
+  | menu_prop
+  | actions_prop
+  | validation_prop
+  | fit_prop
+  | clip_behavior_prop
+  | alignment_prop
+  | positioned_prop
+  | props_block
+  | state_decl
+  | plugin_name_prop
+  | plugin_method_prop
+  | plugin_params_prop
+  | generic_prop           // catch-all for any key: value not matched above
+}
+
+// ── Individual component properties ─────────────────────────────────────────
+
+content_prop    = { "content"   ~ ":" ~ expr }
+src_prop        = { "src"       ~ ":" ~ expr }
+value_prop      = { "value"     ~ ":" ~ expr }
+title_prop      = { "title"     ~ ":" ~ expr }
+icon_prop       = { "icon"      ~ ":" ~ expr }
+direction_prop  = { "direction" ~ ":" ~ expr }
+current_prop    = { "current"   ~ ":" ~ expr }
+validation_prop = { "validation"~ ":" ~ expr }
+data_prop       = { "data"      ~ ":" ~ expr }
+columns_prop    = { "columns"   ~ ":" ~ responsive_array }
+
+items_prop = { "items" ~ ":" ~ "[" ~ child_item* ~ "]" }
+
+menu_prop = { "menu" ~ ":" ~ "{" ~ component_prop* ~ "}" }
+actions_prop = { "actions" ~ ":" ~ "[" ~ child_item* ~ "]" }
+
+fit_prop = { "fit" ~ ":" ~ fit_value }
+fit_value = { "cover" | "contain" | "fill" | "scale_down" | "none" }
+
+clip_behavior_prop = { "clip_behavior" ~ ":" ~ clip_behavior_value }
+clip_behavior_value = { "anti_aliased" | "hard" | "none" }
+
+show_if_prop = { "show_if" ~ ":" ~ expr }
+
+/// Plugin built-in props
+plugin_name_prop   = { "name"   ~ ":" ~ string }
+plugin_method_prop = { "method" ~ ":" ~ string }
+plugin_params_prop = { "params" ~ ":" ~ "{" ~ body_entry* ~ "}" }
+
+/// build: (item) => { component_node }
+build_prop = {
+    "build" ~ ":" ~ "(" ~ ident ~ ")" ~ "=>" ~ "{" ~ component_node ~ "}"
+  | "build" ~ ":" ~ lambda_expr
+}
+
+/// Catch-all generic property: key: value (handles unrecognised props)
+generic_prop = { ident ~ ":" ~ expr }
+
+// ── Stack-specific properties ─────────────────────────────────────────────────
+
+/// alignment: on stack: — default alignment for all children that don't use positioned:
+/// Values: top_left | top_center | top_right | center_left | center | center_right
+///         bottom_left | bottom_center | bottom_right
+alignment_prop = { "alignment" ~ ":" ~ alignment_value }
+
+alignment_value = {
+    "top_left"      | "top_center"    | "top_right"
+  | "center_left"   | "center"        | "center_right"
+  | "bottom_left"   | "bottom_center" | "bottom_right"
+}
+
+/// positioned: { top: 10dp  left: 20dp  right: ...  bottom: ... width: ... height: ... }
+/// Placed on a child inside stack: { children: [...] } to absolutely position it.
+positioned_prop = { "positioned" ~ ":" ~ "{" ~ positioned_entry* ~ "}" }
+
+positioned_entry = {
+    ("top" | "bottom" | "left" | "right" | "width" | "height") ~ ":" ~ (dimension | dollar_var)
+}
+
+// ============================================================================
+// EVENT HANDLERS
+// ============================================================================
+
+event_prop = _{
+    on_click
+  | on_change
+  | on_submit
+  | on_select
+  | on_touch_start
+  | on_touch_move
+  | on_touch_end
+  | on_touch_cancel
+  | on_mount
+  | on_update
+  | on_unmount
+  | on_scroll
+  | on_scroll_end
+}
+
+on_click        = { "on_click"        ~ ":" ~ event_handler }
+on_change       = { "on_change"       ~ ":" ~ event_handler }
+on_submit       = { "on_submit"       ~ ":" ~ event_handler }
+on_select       = { "on_select"       ~ ":" ~ event_handler }
+on_touch_start  = { "on_touch_start"  ~ ":" ~ event_handler }
+on_touch_move   = { "on_touch_move"   ~ ":" ~ event_handler }
+on_touch_end    = { "on_touch_end"    ~ ":" ~ event_handler }
+on_touch_cancel = { "on_touch_cancel" ~ ":" ~ event_handler }
+on_mount        = { "on_mount"        ~ ":" ~ event_handler }
+on_update       = { "on_update"       ~ ":" ~ event_handler }
+on_unmount      = { "on_unmount"      ~ ":" ~ event_handler }
+on_scroll       = { "on_scroll"       ~ ":" ~ event_handler }
+on_scroll_end   = { "on_scroll_end"   ~ ":" ~ event_handler }
+
+/// An event handler value — can be a wait:-call, a direct call, lambda, or navigate
+event_handler = _{
+    wait_call_expr
+  | navigate_expr
+  | navigate_back_expr
+  | lambda_expr
+  | func_call_expr
+  | ident                  // bare name reference
+}
+
+// ============================================================================
+// ANIMATE BLOCK
+// ============================================================================
+
+/// animate: { property: "opacity"  from: 0  to: 1  duration: 300ms  easing: ease_in_out }
+animate_block = { "animate" ~ ":" ~ "{" ~ animate_prop* ~ "}" }
+
+animate_prop = _{
+    anim_property
+  | anim_from
+  | anim_to
+  | anim_duration
+  | anim_delay
+  | anim_easing
+  | anim_repeat
+  | anim_auto_reverse
+}
+
+anim_property    = { "property"     ~ ":" ~ string }
+anim_from        = { "from"         ~ ":" ~ expr }
+anim_to          = { "to"           ~ ":" ~ expr }
+anim_duration    = { "duration"     ~ ":" ~ dimension }
+anim_delay       = { "delay"        ~ ":" ~ dimension }
+anim_easing      = { "easing"       ~ ":" ~ easing_value }
+anim_repeat      = { "repeat"       ~ ":" ~ bool_lit }
+anim_auto_reverse = { "auto_reverse" ~ ":" ~ bool_lit }
+
+easing_value = {
+    "ease_in_out" | "ease_in" | "ease_out" | "linear" | "bounce" | "spring"
+}
+
+// ============================================================================
+// STYLES BLOCK
+// ============================================================================
+
+/// styles: { key: value  @bp { key: value }  key: [base, @bp: v] }
+styles_block = { "styles" ~ ":" ~ "{" ~ style_prop* ~ "}" }
+
+style_prop = _{
+    breakpoint_override
+  | overflow_prop
+  | overflow_x_prop
+  | overflow_y_prop
+  | text_overflow_prop
+  | max_lines_prop
+  | line_clamp_prop
+  | scroll_indicator_prop
+  | scroll_snap_prop
+  | scroll_enabled_prop
+  | on_scroll
+  | on_scroll_end
+  | clip_behavior_prop
+  | fit_prop
+  | generic_style_prop
+}
+
+/// @md { font_size: 16sp  color: "red" }
+breakpoint_override = { "@" ~ ident ~ "{" ~ generic_style_prop* ~ "}" }
+
+/// Regular style property: key: value_or_responsive_array
+generic_style_prop = { ident ~ ":" ~ (responsive_array | style_value) }
+
+/// A responsive array: [base, @md: val, @lg: val]
+responsive_array = { "[" ~ style_value ~ ("," ~ responsive_array_entry)* ~ ","? ~ "]" }
+
+responsive_array_entry = {
+    "@" ~ ident ~ ":" ~ style_value     // @md: 75%
+  | style_value                          // bare value
+}
+
+/// Style value — dimension, string, number, bool, dollar_var, or keyword
+style_value = _{
+    dimension
+  | dollar_var
+  | bool_lit
+  | null_lit
+  | float
+  | integer
+  | string
+  | ident                // keyword-style values: hidden, scroll, cover, etc.
+}
+
+// ── Overflow properties ───────────────────────────────────────────────────────
+
+overflow_prop   = { "overflow"   ~ ":" ~ overflow_value }
+overflow_x_prop = { "overflow_x" ~ ":" ~ overflow_value }
+overflow_y_prop = { "overflow_y" ~ ":" ~ overflow_value }
+
+overflow_value = {
+    "scroll_y" | "scroll_x" | "scroll" | "hidden" | "visible" | "auto"
+}
+
+// ── Text overflow ─────────────────────────────────────────────────────────────
+
+text_overflow_prop = { "text_overflow" ~ ":" ~ text_overflow_value }
+text_overflow_value = { "ellipsis" | "clip" | "fade" }
+
+max_lines_prop = { "max_lines" ~ ":" ~ integer }
+line_clamp_prop = { "line_clamp" ~ ":" ~ integer }
+
+// ── Scroll config ─────────────────────────────────────────────────────────────
+
+scroll_indicator_prop = { "scroll_indicator" ~ ":" ~ (bool_lit | dollar_var) }
+scroll_snap_prop      = { "scroll_snap"      ~ ":" ~ scroll_snap_value }
+scroll_enabled_prop   = { "scroll_enabled"   ~ ":" ~ (bool_lit | dollar_var) }
+
+scroll_snap_value = { "start" | "center" | "end" | "none" }
+
+// ============================================================================
+// TESTING DSL
+// ============================================================================
+
+/// describe: "Suite name" => { it: ... }
+test_suite = {
+    "describe:" ~ string ~ "=>" ~ "{" ~ test_case* ~ "}"
+  | "describe" ~ ":" ~ string ~ "=>" ~ "{" ~ test_case* ~ "}"
+}
+
+test_case = {
+    "it:" ~ string ~ "=>" ~ "{" ~ test_body_stmt* ~ "}"
+  | "it" ~ ":" ~ string ~ "=>" ~ "{" ~ test_body_stmt* ~ "}"
+}
+
+test_body_stmt = _{
+    mock_block
+  | assertion
+  | wait_fetch_stmt
+  | wait_call_stmt
+  | assign_stmt
+  | call_stmt
+  | stmt
+}
+
+/// mock: { url: "..." response: { ... } status: 200 }
+mock_block = {
+    "mock:" ~ "{" ~ mock_prop* ~ "}"
+  | "mock"  ~ ":" ~ "{" ~ mock_prop* ~ "}"
+}
+
+mock_prop = _{
+    mock_url
+  | mock_response
+  | mock_status
+}
+
+mock_url      = { "url"      ~ ":" ~ string }
+mock_response = { "response" ~ ":" ~ object_literal }
+mock_status   = { "status"   ~ ":" ~ integer }
+
+/// expect: expr .toBe: value  or  expect: expr .toBeNull:()  etc.
+assertion = {
+    ("expect:" | "expect" ~ ":") ~ expr ~ matcher
+}
+
+matcher = _{
+    matcher_to_be
+  | matcher_to_equal
+  | matcher_to_contain
+  | matcher_to_be_null
+  | matcher_to_be_true
+  | matcher_to_be_false
+  | matcher_to_throw
+}
+
+matcher_to_be      = { ".toBe:"      ~ expr | ".toBe"      ~ ":" ~ expr }
+matcher_to_equal   = { ".toEqual:"   ~ expr | ".toEqual"   ~ ":" ~ expr }
+matcher_to_contain = { ".toContain:" ~ expr | ".toContain" ~ ":" ~ expr }
+matcher_to_be_null  = { ".toBeNull:()"  | ".toBeNull"  ~ ":" ~ "(" ~ ")" }
+matcher_to_be_true  = { ".toBeTrue:()"  | ".toBeTrue"  ~ ":" ~ "(" ~ ")" }
+matcher_to_be_false = { ".toBeFalse:()" | ".toBeFalse" ~ ":" ~ "(" ~ ")" }
+matcher_to_throw    = { ".toThrow:()"   | ".toThrow"   ~ ":" ~ "(" ~ ")" }
+
+// ============================================================================
+// OBJECT LITERAL  (used in mock responses, fetch bodies, params)
+// ============================================================================
+
+object_literal = { "{" ~ object_entry* ~ "}" }
+
+object_entry = { (ident | string) ~ ":" ~ (expr | object_literal | array_literal) ~ ","? }
+
+array_literal = { "[" ~ (expr ~ ","?)* ~ "]" }
+
+// ============================================================================
+// NULL SAFETY OPERATORS
+// ============================================================================
+// Already embedded in null_coalesce_expr (??) and safe_nav_expr (?.)
+// These are handled within expression rules above.
+
+// ============================================================================
+// PLUGIN BLOCK  (as a component node alias)
+// ============================================================================
+// plugin: { name: "frame_maps"  method: "showMap"  params: { lat: 37.7  lng: -122.4 } }
+// This is handled generically by component_node with kind "plugin"
+// and plugin_name_prop, plugin_method_prop, plugin_params_prop above.

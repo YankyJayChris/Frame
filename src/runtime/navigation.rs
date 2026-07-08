@@ -7,6 +7,7 @@ pub struct Navigation {
     transition: Option<String>,
     params: HashMap<String, HashMap<String, String>>,
     pages: Vec<Page>,
+    home_route: String,
 }
 
 impl Navigation {
@@ -19,6 +20,7 @@ impl Navigation {
             transition: None,
             params: HashMap::new(),
             pages: Vec::new(),
+            home_route: "/home".to_string(),
         }
     }
 
@@ -62,7 +64,10 @@ impl Navigation {
     }
 
     pub fn current_route(&self) -> &str {
-        self.modal.as_ref().unwrap_or(self.stack.back().unwrap_or(&"/home".to_string()))
+        self.modal.as_deref()
+            .unwrap_or_else(|| {
+                self.stack.back().map(|s| s.as_str()).unwrap_or(&self.home_route)
+            })
     }
 
     pub fn current_page(&self) -> Option<&Page> {

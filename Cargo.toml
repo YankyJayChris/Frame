@@ -23,15 +23,16 @@ softbuffer = "0.4"         # Canvas rendering
 fontdue = "0.7"            # Font rendering
 lazy_static = "1.4"        # Lazy statics
 minifier = "0.0.43"        # Minification
+sha2 = "0.10"              # SHA-256 hashing for incremental cache
+notify = "6.1"             # File watching for --watch flag
+clap = { version = "4.5", features = ["derive"] }   # CLI argument parsing
+proptest = "1.6"           # Property-based testing
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"               # Android native plugins
 
-[target.'cfg(target_os = "ios")'.dependencies]
-objc = "0.2"               # iOS native plugins
-
-[build-dependencies]
-notify = "6.1"             # File watching for build.rs
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"               # macOS/iOS native plugins
 
 [lib]
 name = "frame"
