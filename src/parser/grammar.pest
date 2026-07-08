@@ -418,6 +418,7 @@ component_kind = _{
 }
 
 builtin_kind = _{
+    // ── Layout ──────────────────────────────────────────────────────────────
     "text"
   | "button"
   | "image"
@@ -441,6 +442,57 @@ builtin_kind = _{
   | "grid"
   | "plugin"
   | "item"
+
+  // ── Feedback ─────────────────────────────────────────────────────────────
+  | "toast"           // Quick transient message (Snackbar / UIAlertController auto-dismiss)
+  | "tooltip"         // Contextual help bubble (TooltipBox / UIPopoverPresentationController)
+  | "badge"           // Notification count overlay (BadgedBox / UILabel overlay)
+  | "progress_bar"    // Linear determinate/indeterminate (LinearProgressIndicator / UIProgressView)
+  | "progress_circle" // Circular progress (CircularProgressIndicator / CAShapeLayer)
+
+  // ── Navigation ───────────────────────────────────────────────────────────
+  | "tab_bar"         // Tab-based navigation shell (TabRow / UITabBarController)
+  | "tab"             // Single tab entry (Tab / UITabBarItem)
+  | "bottom_sheet"    // Slide-up panel (ModalBottomSheet / UISheetPresentationController)
+
+  // ── Inputs ───────────────────────────────────────────────────────────────
+  | "switch"          // Toggle switch (Switch / UISwitch)
+  | "checkbox"        // Multi-select checkbox (Checkbox / custom UIButton)
+  | "radio"           // Single-select radio (RadioButton / custom)
+  | "slider"          // Range slider (Slider / UISlider)
+  | "stepper"         // Increment/decrement (Row+buttons / UIStepper)
+  | "text_area"       // Multi-line text input (TextField multiline / UITextView)
+  | "search_bar"      // Search input (SearchBar / UISearchBar)
+  | "date_picker"     // Date picker (DatePicker / UIDatePicker)
+  | "time_picker"     // Time picker (TimeInput / UIDatePicker time mode)
+  | "color_picker"    // Colour picker (no standard — custom / UIColorPickerViewController iOS 14+)
+  | "rating"          // Star rating (custom Row of icons / custom)
+  | "otp_input"       // OTP / PIN code field (Row of TextFields)
+
+  // ── Display ──────────────────────────────────────────────────────────────
+  | "avatar"          // Circular image (AsyncImage clipped / UIImageView)
+  | "chip"            // Compact tag/filter (AssistChip / pill UIButton)
+  | "tag"             // Static label pill (SuggestionChip / UILabel pill)
+  | "banner"          // Dismissible info bar (Card top-anchored / UIView)
+  | "table"           // Tabular data (LazyColumn + header row / UITableView)
+  | "accordion"       // Expand/collapse section (AnimatedVisibility / custom)
+  | "timeline"        // Vertical event timeline (LazyColumn custom layout)
+  | "skeleton"        // Loading placeholder shimmer (AnimatedShimmer / custom)
+
+  // ── Media ────────────────────────────────────────────────────────────────
+  | "video_player"    // Video playback (ExoPlayer AndroidView / AVPlayerViewController)
+  | "audio_player"    // Audio controls (MediaPlayer / AVAudioPlayer)
+  | "lottie"          // Lottie animation (Lottie Compose / Lottie iOS)
+  | "web_view"        // Embedded browser (AndroidView WebView / WKWebView)
+  | "map_view"        // Map display (Google Maps/AndroidView / MKMapView)
+  | "camera_view"     // Live camera preview (CameraX Preview / AVCaptureVideoPreviewLayer)
+  | "qr_scanner"      // QR/barcode scanner (CameraX Analysis / AVFoundation)
+
+  // ── Gestures ─────────────────────────────────────────────────────────────
+  | "swipeable"       // Swipe-to-action wrapper (SwipeToDismiss / UISwipeGestureRecognizer)
+  | "draggable"       // Drag-and-drop wrapper (Draggable+DragTarget / UIDragInteraction)
+  | "refresh"         // Pull-to-refresh (pullRefresh / UIRefreshControl)
+  | "long_press"      // Long-press gesture wrapper (combinedClickable / UILongPressGestureRecognizer)
 }
 
 /// Properties that can appear inside a component node block
@@ -473,6 +525,25 @@ component_prop = _{
   | plugin_name_prop
   | plugin_method_prop
   | plugin_params_prop
+  // New named props for extended built-in components
+  | min_prop
+  | max_prop
+  | placeholder_prop
+  | url_prop
+  | lat_prop
+  | lng_prop
+  | lines_prop
+  | length_prop
+  | count_prop
+  | message_prop
+  | selected_prop
+  | checked_prop
+  | refreshing_prop
+  | duration_prop
+  | label_prop
+  | text_prop
+  | on_complete_prop
+  | on_scan_prop
   | generic_prop           // catch-all for any key: value not matched above
 }
 
@@ -501,6 +572,27 @@ clip_behavior_prop = { "clip_behavior" ~ ":" ~ clip_behavior_value }
 clip_behavior_value = { "anti_aliased" | "hard" | "none" }
 
 show_if_prop = { "show_if" ~ ":" ~ expr }
+
+// ── Named props for new built-in components ──────────────────────────────────
+
+min_prop         = { "min"         ~ ":" ~ expr }
+max_prop         = { "max"         ~ ":" ~ expr }
+placeholder_prop = { "placeholder" ~ ":" ~ expr }
+url_prop         = { "url"         ~ ":" ~ expr }
+lat_prop         = { "lat"         ~ ":" ~ expr }
+lng_prop         = { "lng"         ~ ":" ~ expr }
+lines_prop       = { "lines"       ~ ":" ~ expr }
+length_prop      = { "length"      ~ ":" ~ expr }
+count_prop       = { "count"       ~ ":" ~ expr }
+message_prop     = { "message"     ~ ":" ~ expr }
+selected_prop    = { "selected"    ~ ":" ~ expr }
+checked_prop     = { "checked"     ~ ":" ~ expr }
+refreshing_prop  = { "refreshing"  ~ ":" ~ expr }
+duration_prop    = { "duration"    ~ ":" ~ expr }
+label_prop       = { "label"       ~ ":" ~ expr }
+text_prop        = { "text"        ~ ":" ~ expr }
+on_complete_prop = { "on_complete" ~ ":" ~ event_handler }
+on_scan_prop     = { "on_scan"     ~ ":" ~ event_handler }
 
 /// Plugin built-in props
 plugin_name_prop   = { "name"   ~ ":" ~ string }
@@ -555,6 +647,15 @@ event_prop = _{
   | on_unmount
   | on_scroll
   | on_scroll_end
+  // New gesture / interaction events
+  | on_scan
+  | on_refresh
+  | on_increment
+  | on_decrement
+  | on_complete
+  | on_long_press
+  | on_drag
+  | on_swipe
 }
 
 on_click        = { "on_click"        ~ ":" ~ event_handler }
@@ -570,6 +671,15 @@ on_update       = { "on_update"       ~ ":" ~ event_handler }
 on_unmount      = { "on_unmount"      ~ ":" ~ event_handler }
 on_scroll       = { "on_scroll"       ~ ":" ~ event_handler }
 on_scroll_end   = { "on_scroll_end"   ~ ":" ~ event_handler }
+// New gesture / interaction events
+on_scan         = { "on_scan"         ~ ":" ~ event_handler }
+on_refresh      = { "on_refresh"      ~ ":" ~ event_handler }
+on_increment    = { "on_increment"    ~ ":" ~ event_handler }
+on_decrement    = { "on_decrement"    ~ ":" ~ event_handler }
+on_complete     = { "on_complete"     ~ ":" ~ event_handler }
+on_long_press   = { "on_long_press"   ~ ":" ~ event_handler }
+on_drag         = { "on_drag"         ~ ":" ~ event_handler }
+on_swipe        = { "on_swipe"        ~ ":" ~ event_handler }
 
 /// An event handler value — can be a wait:-call, a direct call, lambda, or navigate
 event_handler = _{

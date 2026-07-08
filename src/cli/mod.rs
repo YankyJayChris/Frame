@@ -13,6 +13,22 @@
 
 use clap::{Parser, Subcommand};
 
+pub mod start;
+pub mod check;
+pub mod build;
+pub mod deploy;
+pub mod test_runner;
+pub mod preview;
+pub mod lint;
+
+pub use start::{scaffold_project, Architecture};
+pub use check::run_check;
+pub use build::run_build;
+pub use deploy::{deploy_android, deploy_ios};
+pub use test_runner::run_tests;
+pub use preview::run_preview;
+pub use lint::{run_lint, LintConfig};
+
 /// The Frame framework CLI.
 #[derive(Parser, Debug)]
 #[command(name = "frame", version, about = "Frame — cross-platform mobile framework")]
@@ -72,10 +88,37 @@ pub enum Commands {
         port: u16,
     },
 
+    /// Analyze `.fr` source files for style, naming, and best-practice issues.
+    Lint {
+        /// Only run specific rule IDs, comma-separated (e.g. FR001,FR010).
+        #[arg(long)]
+        rules: Option<String>,
+
+        /// Skip specific rule IDs, comma-separated (e.g. FR042,FR043).
+        #[arg(long)]
+        skip: Option<String>,
+
+        /// Treat warnings as errors (non-zero exit if any warnings found).
+        #[arg(long)]
+        strict: bool,
+    },
+
     /// Manage Frame plugins.
     Plugin {
         #[command(subcommand)]
         action: PluginCommands,
+    },
+
+    /// Check the development environment (like Flutter Doctor).
+    /// Verifies all required tools are installed for building Frame apps.
+    Check {
+        /// Automatically install missing tools where possible.
+        #[arg(long)]
+        fix: bool,
+
+        /// Target platform to check: `android`, `ios`, or `all` (default).
+        #[arg(long, default_value = "all")]
+        target: String,
     },
 }
 

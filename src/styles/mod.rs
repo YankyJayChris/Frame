@@ -1,6 +1,6 @@
 //! Style types for the Frame framework.
 //!
-//! Full responsive style resolution: Task 15.
+//! Full responsive style resolution.
 
 use std::collections::HashMap;
 

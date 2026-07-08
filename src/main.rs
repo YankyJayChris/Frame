@@ -1,126 +1,99 @@
 use clap::Parser as ClapParser;
-use frame::cli::{Cli, Commands, PluginCommands};
-use frame::parser::parse_project;
-use frame::compiler::compile;
-use std::fs;
-use std::process::Command;
+use frame::cli::{
+    Cli, Commands, PluginCommands, scaffold_project, Architecture, run_check,
+    run_build, deploy_android, deploy_ios, run_tests, run_preview,
+    run_lint, LintConfig,
+};
 use std::path::Path;
 
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        // ── frame start <name> ───────────────────────────────────────────────
         Commands::Start { name } => {
-            println!("Creating new Frame app: {}", name);
-            create_app_template(&name).expect("Failed to create app template");
-        }
-
-        Commands::Build { watch: _, strict: _, locale: _ } => {
-            let ast = parse_project(".").unwrap_or_else(|errs| {
-                for e in &errs { eprintln!("{}", e); }
-                panic!("Failed to parse project ({} error(s))", errs.len());
+            println!("Select architecture:");
+            println!("  1) Clean Architecture  (recommended)");
+            println!("  2) MVC");
+            print!("Choice [1]: ");
+            let mut input = String::new();
+            let _ = std::io::stdin().read_line(&mut input);
+            let arch = match input.trim() {
+                "2" | "mvc" | "MVC" => Architecture::Mvc,
+                _                   => Architecture::CleanArchitecture,
+            };
+            scaffold_project(&name, arch).unwrap_or_else(|e| {
+                eprintln!("Error creating project: {e}");
+                std::process::exit(1);
             });
-            let generated = compile(ast);
-            fs::write("src/generated.rs", generated).expect("Failed to write generated code");
-            Command::new("cargo")
-                .arg("build")
-                .status()
-                .expect("Failed to build");
         }
 
+        // ── frame check ──────────────────────────────────────────────────────
+        Commands::Check { fix, target } => {
+            let ok = run_check(&target, fix);
+            if fix && !ok {
+                frame::cli::check::run_fix(&target);
+            }
+            if !ok { std::process::exit(1); }
+        }
+
+        // ── frame build ──────────────────────────────────────────────────────
+        Commands::Build { watch, strict, locale } => {
+            let ok = run_build(watch, strict, locale);
+            if !ok { std::process::exit(1); }
+        }
+
+        // ── frame deploy ─────────────────────────────────────────────────────
         Commands::Deploy { target } => {
-            let ast = parse_project(".").unwrap_or_else(|errs| {
-                for e in &errs { eprintln!("{}", e); }
-                panic!("Failed to parse project ({} error(s))", errs.len());
-            });
-            let generated = compile(ast);
-            fs::write("src/generated.rs", generated).expect("Failed to write generated code");
             match target.as_str() {
                 "android" => {
-                    Command::new("cargo")
-                        .args(["ndk", "-t", "arm64-v8a", "build", "--release"])
-                        .status()
-                        .expect("Failed to build APK");
+                    let ok = deploy_android(Path::new("."));
+                    if !ok { std::process::exit(1); }
                 }
                 "ios" => {
-                    Command::new("xcodebuild")
-                        .args(["-scheme", "frame", "-destination", "generic/platform=iOS"])
-                        .status()
-                        .expect("Failed to deploy IPA");
+                    let ok = deploy_ios(Path::new("."));
+                    if !ok { std::process::exit(1); }
                 }
-                _ => println!("Unsupported target: {}", target),
+                other => {
+                    eprintln!("Unknown deploy target: {other}");
+                    eprintln!("Use: frame deploy android  OR  frame deploy ios");
+                    std::process::exit(1);
+                }
             }
-            println!("Deployed to {}", target);
         }
 
-        Commands::Test { filter: _, coverage: _, pbt: _ } => {
-            // Full test runner implementation: Task 18
-            println!("frame test — full implementation coming in Task 18");
+        // ── frame test ───────────────────────────────────────────────────────
+        Commands::Test { filter, coverage, pbt: _ } => {
+            let ok = run_tests(filter, coverage);
+            if !ok { std::process::exit(1); }
         }
 
+        // ── frame preview ────────────────────────────────────────────────────
         Commands::Preview { port } => {
-            // Full hot-reload server implementation: Task 18
-            println!("frame preview — listening on :{} (full implementation in Task 18)", port);
+            run_preview(port);
         }
 
+        // ── frame lint ───────────────────────────────────────────────────────
+        Commands::Lint { rules, skip, strict } => {
+            let only_rules = rules.map(|r| {
+                r.split(',').map(|s| s.trim().to_uppercase()).collect::<Vec<_>>()
+            });
+            let skip_rules = skip.map(|s| {
+                s.split(',').map(|r| r.trim().to_uppercase()).collect::<Vec<_>>()
+            }).unwrap_or_default();
+            let cfg = LintConfig { only_rules, skip_rules, strict };
+            let ok = run_lint(Path::new("."), &cfg);
+            if !ok { std::process::exit(1); }
+        }
+
+        // ── frame plugin ─────────────────────────────────────────────────────
         Commands::Plugin { action } => match action {
-            PluginCommands::Add { name } => println!("plugin add {} — Task 19", name),
-            PluginCommands::Remove { name } => println!("plugin remove {} — Task 19", name),
-            PluginCommands::Install => println!("plugin install — Task 19"),
-            PluginCommands::List => println!("plugin list — Task 19"),
-            PluginCommands::Create { name } => println!("plugin create {} — Task 19", name),
-            PluginCommands::Publish => println!("plugin publish — Task 19"),
+            PluginCommands::Add { name }    => println!("Installing plugin: {name} (Task 19)"),
+            PluginCommands::Remove { name } => println!("Removing plugin: {name} (Task 19)"),
+            PluginCommands::Install         => println!("Installing all plugins from frame.config.json (Task 19)"),
+            PluginCommands::List            => println!("Listing installed plugins (Task 19)"),
+            PluginCommands::Create { name } => println!("Scaffolding plugin: {name} (Task 19)"),
+            PluginCommands::Publish         => println!("Publishing plugin (Task 19)"),
         },
     }
-}
-
-fn create_app_template(name: &str) -> std::io::Result<()> {
-    let app_dir = Path::new(name);
-    fs::create_dir_all(app_dir)?;
-
-    let cargo_toml = format!(
-        r#"[package]
-name = "{}"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-frame = {{ path = "../" }}
-"#,
-        name
-    );
-    fs::write(app_dir.join("Cargo.toml"), cargo_toml)?;
-
-    fs::create_dir_all(app_dir.join("src"))?;
-
-    let project_fr = concat!(
-        ":vars {\n",
-        "    $primary: \"#007BFF\";\n",
-        "    $spacing: \"10dp\";\n",
-        "}\n",
-        "\n",
-        ":i18n {\n",
-        "    app_title: \"My Frame App\";\n",
-        "}\n",
-        "\n",
-        "page: {\n",
-        "    name: \"Home\"\n",
-        "    route: \"/\"\n",
-        "    styles: { background: \"#F5F5F5\" }\n",
-        "    children: [\n",
-        "        text: {\n",
-        "            content: \"Welcome to Frame!\"\n",
-        "            styles: { font_size: \"20dp\"; color: \"$primary\" }\n",
-        "        }\n",
-        "    ]\n",
-        "}\n"
-    );
-    fs::write(app_dir.join("src/project.fr"), project_fr)?;
-    fs::create_dir_all(app_dir.join("assets"))?;
-
-    println!(
-        "Created '{}'. Run: cd {} && frame build",
-        name, name
-    );
-    Ok(())
 }

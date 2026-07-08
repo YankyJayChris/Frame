@@ -55,6 +55,15 @@ impl std::fmt::Display for FrameError {
     }
 }
 
+// ─── parse_source_str (public helper for round-trip testing) ─────────────────
+
+/// Parse a single .fr source string (for testing and pretty-printer round-trip).
+pub fn parse_source_str(source: &str) -> Result<AST, Vec<FrameError>> {
+    let mut errors = Vec::new();
+    let ast = parse_source(source, "<string>", &mut errors);
+    if errors.is_empty() { Ok(ast) } else { Err(errors) }
+}
+
 // ─── parse_project ────────────────────────────────────────────────────────────
 
 /// Parse a Frame project rooted at `dir`.
@@ -313,19 +322,28 @@ fn parse_typography_block(pair: Pair<Rule>) -> HashMap<String, TypographyStyle> 
             for prop in inner {
                 match prop.as_rule() {
                     Rule::typography_prop => {
-                        let mut pi = prop.into_inner();
-                        let key_or_rule = pi.next();
-                        match key_or_rule {
-                            Some(p) => match p.as_str() {
-                                "font_size"      => { style.font_size = pi.next().map(|v| v.as_str().to_string()).unwrap_or_default(); }
-                                "font_weight"    => { style.font_weight = pi.next().map(|v| strip_quotes(v.as_str())); }
-                                "font_family"    => { style.font_family = pi.next().map(|v| strip_quotes(v.as_str())); }
-                                "line_height"    => { style.line_height = pi.next().map(|v| v.as_str().to_string()); }
-                                "letter_spacing" => { style.letter_spacing = pi.next().map(|v| v.as_str().to_string()); }
-                                "color"          => { style.color = pi.next().map(|v| strip_quotes(v.as_str())); }
-                                _ => {}
-                            },
-                            None => {}
+                        // In pest, string literal keywords in a rule don't produce child pairs,
+                        // so we extract key/value by splitting the raw text on ':'.
+                        let raw = prop.as_str();
+                        // Skip breakpoint_override alternatives handled by outer match
+                        if raw.trim_start().starts_with('@') {
+                            // handled by breakpoint_override arm below
+                        } else {
+                            let colon_pos = raw.find(':');
+                            if let Some(pos) = colon_pos {
+                                let key = raw[..pos].trim();
+                                let val_raw = raw[pos+1..].trim();
+                                let val = strip_quotes(val_raw);
+                                match key {
+                                    "font_size"      => { style.font_size = val; }
+                                    "font_weight"    => { style.font_weight = Some(val); }
+                                    "font_family"    => { style.font_family = Some(val); }
+                                    "line_height"    => { style.line_height = Some(val); }
+                                    "letter_spacing" => { style.letter_spacing = Some(val); }
+                                    "color"          => { style.color = Some(val); }
+                                    _ => {}
+                                }
+                            }
                         }
                     }
                     Rule::breakpoint_override => {
@@ -655,6 +673,7 @@ fn parse_component_node(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &s
             Rule::positioned_prop => {
                 node.positioned = Some(parse_positioned_prop(child.clone()));
             }
+            // ── Original named props ──────────────────────────────────────
             Rule::content_prop | Rule::src_prop | Rule::value_prop
             | Rule::title_prop | Rule::icon_prop | Rule::direction_prop
             | Rule::current_prop | Rule::validation_prop => {
@@ -672,6 +691,44 @@ fn parse_component_node(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &s
                 if let Some(expr_pair) = child.clone().into_inner().next() {
                     node.props.insert(key.to_string(), parse_expr(expr_pair));
                 }
+            }
+            // ── New first-class named props ───────────────────────────────
+            Rule::min_prop | Rule::max_prop | Rule::placeholder_prop
+            | Rule::url_prop | Rule::lat_prop | Rule::lng_prop
+            | Rule::lines_prop | Rule::length_prop | Rule::count_prop
+            | Rule::message_prop | Rule::selected_prop | Rule::checked_prop
+            | Rule::refreshing_prop | Rule::duration_prop
+            | Rule::label_prop | Rule::text_prop => {
+                let key = match child.as_rule() {
+                    Rule::min_prop         => "min",
+                    Rule::max_prop         => "max",
+                    Rule::placeholder_prop => "placeholder",
+                    Rule::url_prop         => "url",
+                    Rule::lat_prop         => "lat",
+                    Rule::lng_prop         => "lng",
+                    Rule::lines_prop       => "lines",
+                    Rule::length_prop      => "length",
+                    Rule::count_prop       => "count",
+                    Rule::message_prop     => "message",
+                    Rule::selected_prop    => "selected",
+                    Rule::checked_prop     => "checked",
+                    Rule::refreshing_prop  => "refreshing",
+                    Rule::duration_prop    => "duration",
+                    Rule::label_prop       => "label",
+                    Rule::text_prop        => "text",
+                    _ => "unknown",
+                };
+                if let Some(expr_pair) = child.clone().into_inner().next() {
+                    node.props.insert(key.to_string(), parse_expr(expr_pair));
+                }
+            }
+            // ── New first-class event props stored in node.props ──────────
+            Rule::on_scan_prop | Rule::on_complete_prop
+            | Rule::on_scan | Rule::on_refresh
+            | Rule::on_increment | Rule::on_decrement
+            | Rule::on_complete | Rule::on_long_press
+            | Rule::on_drag | Rule::on_swipe => {
+                apply_extended_event_to_props(child.clone(), &mut node.props);
             }
             Rule::columns_prop => {
                 if let Some(ra) = child.clone().into_inner().next() {
@@ -706,6 +763,7 @@ fn parse_component_node(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &s
             Rule::props_block => {}
             _ => {
                 apply_event_prop_to_event_map(child.clone(), &mut node.events);
+                apply_extended_event_to_props(child.clone(), &mut node.props);
             }
         }
     }
@@ -1054,6 +1112,28 @@ fn apply_event_prop_to_event_map(pair: Pair<Rule>, events: &mut EventMap) {
         Rule::on_update       => events.on_update       = expr_opt,
         Rule::on_unmount      => events.on_unmount      = expr_opt,
         _ => {}
+    }
+}
+
+/// Like `apply_event_prop_to_event_map` but also stores extended events as props.
+fn apply_extended_event_to_props(pair: Pair<Rule>, props: &mut std::collections::HashMap<String, Expr>) {
+    let key = match pair.as_rule() {
+        Rule::on_scan       => Some("on_scan"),
+        Rule::on_refresh    => Some("on_refresh"),
+        Rule::on_increment  => Some("on_increment"),
+        Rule::on_decrement  => Some("on_decrement"),
+        Rule::on_complete   => Some("on_complete"),
+        Rule::on_long_press => Some("on_long_press"),
+        Rule::on_drag       => Some("on_drag"),
+        Rule::on_swipe      => Some("on_swipe"),
+        Rule::on_complete_prop => Some("on_complete"),
+        Rule::on_scan_prop     => Some("on_scan"),
+        _ => None,
+    };
+    if let Some(k) = key {
+        if let Some(expr) = pair.into_inner().next().map(parse_expr) {
+            props.insert(k.to_string(), expr);
+        }
     }
 }
 
