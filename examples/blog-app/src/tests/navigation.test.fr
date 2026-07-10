@@ -1,0 +1,14 @@
+// Navigation tests
+// Run with: frame test
+
+describe: "Navigation" => {
+
+  it: "home route is /home" => {
+    expect: "/home" .toBe: "/home"
+  }
+
+  it: "splash route is /" => {
+    expect: "/" .toBe: "/"
+  }
+
+}

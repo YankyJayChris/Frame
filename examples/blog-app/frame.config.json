@@ -1,0 +1,10 @@
+{
+  "name": "blog-app",
+  "bundle_id": "com.example.blog-app",
+  "version": "1.0.0",
+  "build_number": "1",
+  "render_mode": "native",
+  "min_android_sdk": 24,
+  "min_ios": "16.0",
+  "plugins": []
+}

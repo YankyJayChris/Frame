@@ -1,7 +1,8 @@
 //! Type checker for the Frame AST.
 
 use crate::parser::{AST, FrameError, ErrorCategory, Function, Stmt};
-use crate::parser::ast::{Expr, FRType, OverflowValue, Value, ComponentNode};
+use crate::parser::ast::{Expr, FRType, OverflowValue, Value, ComponentNode, VarDecl};
+use std::collections::HashMap;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ pub fn type_check(ast: &AST) -> Vec<FrameError> {
 
     check_async_wait_enforcement(ast, &mut errors);
     check_prop_types(ast, &mut errors);
+    check_var_types(ast, &mut errors);
     check_overflow_list_warning(ast, &mut errors);
 
     errors
@@ -320,6 +322,139 @@ fn check_list_overflow_node(node: &ComponentNode, errors: &mut Vec<FrameError>) 
     }
     for child in &node.children {
         check_list_overflow_node(child, errors);
+    }
+}
+
+// ─── Pass 4: variable type checking ────────────────────────────────────────────
+
+fn check_var_types(ast: &AST, errors: &mut Vec<FrameError>) {
+    for func in ast.functions.values() {
+        let mut scope = HashMap::new();
+        check_stmts(&func.body, &mut scope, errors);
+    }
+    for store in ast.stores.values() {
+        for action in store.actions.values() {
+            let mut scope = HashMap::new();
+            check_stmts(&action.body, &mut scope, errors);
+        }
+    }
+    for comp in ast.components.values() {
+        for func in comp.functions.values() {
+            let mut scope = HashMap::new();
+            check_stmts(&func.body, &mut scope, errors);
+        }
+    }
+}
+
+fn check_stmts(stmts: &[Stmt], scope: &mut HashMap<String, FRType>, errors: &mut Vec<FrameError>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::VarDecl(vd) => {
+                if let Some(init) = &vd.initializer {
+                    if let Some(actual) = infer_literal_type(init, scope) {
+                        if !types_compatible(&actual, &vd.type_) {
+                            errors.push(FrameError {
+                                category: ErrorCategory::TypeMismatchError,
+                                file: "<project>".to_string(),
+                                line: 0,
+                                column: 0,
+                                message: format!(
+                                    "Type mismatch: '{}' declared as {} but initializer is {}",
+                                    vd.name, frtype_name(&vd.type_), frtype_name(&actual)
+                                ),
+                            });
+                        }
+                    }
+                }
+                scope.insert(vd.name.clone(), vd.type_.clone());
+            }
+            Stmt::Assign(name, expr) => {
+                if let Some(expected) = scope.get(name) {
+                    if let Some(actual) = infer_literal_type(expr, scope) {
+                        if !types_compatible(&actual, expected) {
+                            errors.push(FrameError {
+                                category: ErrorCategory::TypeMismatchError,
+                                file: "<project>".to_string(),
+                                line: 0,
+                                column: 0,
+                                message: format!(
+                                    "Type mismatch: assigning {} to '{}' (declared as {})",
+                                    frtype_name(&actual), name, frtype_name(expected)
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+            Stmt::If(_, then_body, else_body) => {
+                let mut then_scope = scope.clone();
+                check_stmts(then_body, &mut then_scope, errors);
+                if let Some(else_stmts) = else_body {
+                    let mut else_scope = scope.clone();
+                    check_stmts(else_stmts, &mut else_scope, errors);
+                }
+            }
+            Stmt::For(_, _, body) => {
+                check_stmts(body, scope, errors);
+            }
+            Stmt::Switch(_, cases) => {
+                for (_, body) in cases {
+                    let mut case_scope = scope.clone();
+                    check_stmts(body, &mut case_scope, errors);
+                }
+            }
+            Stmt::TryCatch { body, catch_body, finally_body, .. } => {
+                check_stmts(body, scope, errors);
+                let mut catch_scope = scope.clone();
+                catch_scope.insert("err".to_string(), FRType::String_);
+                check_stmts(catch_body, &mut catch_scope, errors);
+                if let Some(fb) = finally_body {
+                    check_stmts(fb, scope, errors);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn infer_literal_type(expr: &Expr, scope: &HashMap<String, FRType>) -> Option<FRType> {
+    match expr {
+        Expr::Literal(Value::Str(_)) => Some(FRType::String_),
+        Expr::Literal(Value::Int(_)) => Some(FRType::Int),
+        Expr::Literal(Value::Float(_)) => Some(FRType::Float),
+        Expr::Literal(Value::Bool(_)) => Some(FRType::Bool),
+        Expr::Literal(Value::Null) => Some(FRType::Nullable(Box::new(FRType::String_))),
+        Expr::Literal(Value::List(_)) => Some(FRType::List),
+        Expr::Literal(Value::Object(_)) => Some(FRType::Object),
+        Expr::Var(name) => scope.get(name).cloned(),
+        _ => None,
+    }
+}
+
+fn types_compatible(actual: &FRType, expected: &FRType) -> bool {
+    if actual == expected {
+        return true;
+    }
+    // Null can be assigned to nullable, object, or string
+    if matches!(actual, FRType::Nullable(_)) {
+        return matches!(expected, FRType::Nullable(_) | FRType::Object | FRType::String_);
+    }
+    // Int literal can be assigned to float
+    if matches!(actual, FRType::Int) && matches!(expected, FRType::Float) {
+        return true;
+    }
+    false
+}
+
+fn frtype_name(t: &FRType) -> &'static str {
+    match t {
+        FRType::String_ => "string",
+        FRType::Int => "int",
+        FRType::Float => "float",
+        FRType::Bool => "bool",
+        FRType::Object => "object",
+        FRType::List => "list",
+        FRType::Nullable(_) => "nullable",
     }
 }
 
@@ -713,5 +848,73 @@ mod tests {
             !errs.iter().any(|e| matches!(e.category, ErrorCategory::TypeMismatchError)),
             "Unexpected TypeMismatchError for valid bool string"
         );
+    }
+
+    // ── :var type checking ────────────────────────────────────────────────────
+
+    fn make_fn(name: &str, body: Vec<Stmt>) -> Function {
+        Function { name: name.to_string(), is_async: false, params: vec![], return_type: None, body }
+    }
+
+    #[test]
+    fn test_var_decl_int_init_ok() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: Some(Expr::Literal(Value::Int(42))) }),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.is_empty(), "Expected no errors, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_var_decl_no_init_ok() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::String_, initializer: None }),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.is_empty(), "Expected no errors, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_var_decl_type_mismatch_string_to_int() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: Some(Expr::Literal(Value::Str("hello".to_string()))) }),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.iter().any(|e| e.message.contains("Type mismatch")), "Expected Type mismatch error, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_var_decl_int_to_float_ok() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Float, initializer: Some(Expr::Literal(Value::Int(42))) }),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.is_empty(), "Expected no errors (int→float widening), got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_assign_type_mismatch_after_decl() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: None }),
+            Stmt::Assign("x".to_string(), Expr::Literal(Value::Str("bad".to_string()))),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.iter().any(|e| e.message.contains("Type mismatch")), "Expected Type mismatch error, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_assign_same_type_ok() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: None }),
+            Stmt::Assign("x".to_string(), Expr::Literal(Value::Int(99))),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.is_empty(), "Expected no errors, got: {:?}", errs);
     }
 }

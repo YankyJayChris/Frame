@@ -1,8 +1,0 @@
-Card: {
-  props: {}
-  styles: { width: "200px", border: "1px solid #FFF" }
-  children: [
-    Text: { content: "$props.content" }
-    Button: { content: "Click Me" on_click: "log:(\"Clicked\")" }
-  ]
-}

@@ -1,7 +1,0 @@
-[package]
-name = "my-frame-app"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-frame-core = { path = "../frame-core" }

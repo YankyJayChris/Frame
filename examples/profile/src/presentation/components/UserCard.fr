@@ -1,0 +1,27 @@
+component UserCard: {
+    props: {
+        name:  string = ""
+        email: string = ""
+    }
+    styles: {
+        border_radius: 8dp
+        overflow: hidden
+        padding: 12dp
+        margin_bottom: 8dp
+    }
+    children: [
+        column: {
+            styles: { gap: 4dp }
+            children: [
+                text: {
+                    content: $name
+                    styles: { font_size: 16sp  font_weight: "bold" }
+                }
+                text: {
+                    content: $email
+                    styles: { font_size: 14sp }
+                }
+            ]
+        }
+    ]
+}

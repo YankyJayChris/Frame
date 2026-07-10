@@ -1,0 +1,11 @@
+# Frame build output
+build/
+
+# Installed plugins
+frame_modules/
+
+# IDE
+.vscode/
+.idea/
+*.DS_Store
+*.swp

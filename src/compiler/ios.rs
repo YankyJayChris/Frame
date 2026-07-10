@@ -3,6 +3,7 @@
 //! Entry point: `gen_ios(ast, config) -> Vec<OutputFile>`
 //! Mirrors android.rs — every built-in component has a UIKit mapping.
 
+#![allow(unused_variables)]
 use crate::parser::ast::*;
 use std::collections::HashMap;
 
@@ -45,19 +46,79 @@ pub struct OutputFile {
 
 /// Generate all iOS project files from an AST + config.
 pub fn gen_ios(ast: &AST, config: &IosConfig) -> Vec<OutputFile> {
+    gen_ios_with_plugins(ast, config, &[])
+}
+
+/// Like [`gen_ios`] but also accepts extra Swift source files from plugins.
+/// Each entry is `(filename, source_content)`.
+pub fn gen_ios_with_plugins(
+    ast: &AST,
+    config: &IosConfig,
+    extra_swift_sources: &[(&str, &str)],
+) -> Vec<OutputFile> {
     let mut files: Vec<OutputFile> = Vec::new();
     let bundle_id = &config.bundle_id;
     let app_name = &config.app_name;
+    let safe_name = app_name.replace(' ', "");
 
     // Detect features
-    let uses_fetch       = ios_uses_fetch(ast);
-    let uses_camera      = ios_uses_call(ast, "camera:capture");
-    let uses_location    = ios_uses_call(ast, "location:get");
+    let uses_fetch        = ios_uses_fetch(ast);
+    let uses_camera       = ios_uses_call(ast, "camera:capture");
+    let uses_audio_record = ios_uses_call(ast, "audio:record");
+    let uses_location     = ios_uses_call(ast, "location:get") || ios_uses_call(ast, "location:watch");
+    let uses_location_bg  = ios_uses_call(ast, "location:background");
     let uses_notification = ios_uses_call(ast, "notification:send");
-    let uses_http        = uses_fetch; // NSAppTransportSecurity for HTTP
+    let uses_bluetooth    = ios_uses_call(ast, "bluetooth:connect") || ios_uses_call(ast, "bluetooth:scan");
+    let uses_contacts     = ios_uses_call(ast, "contacts:read") || ios_uses_call(ast, "contacts:write");
+    let uses_calendar     = ios_uses_call(ast, "calendar:read") || ios_uses_call(ast, "calendar:write");
+    let uses_photos       = ios_uses_call(ast, "storage:images");
+    let uses_health       = ios_uses_call(ast, "health:steps");
+    let uses_speech       = ios_uses_call(ast, "speech:recognize");
+    let uses_face_id      = ios_uses_call(ast, "auth:biometric");
+    let uses_http         = uses_fetch;
+
+    // ── Xcode project file (project.pbxproj) ─────────────────────────────────
+    // Collect all Swift source file names BEFORE building pbxproj.
+    let mut swift_sources: Vec<String> = vec![
+        "AppDelegate.swift".to_string(),
+        "SceneDelegate.swift".to_string(),
+        "MainViewController.swift".to_string(),
+        "KeychainHelper.swift".to_string(),
+        "UIColorExtension.swift".to_string(),   // always needed for color: styles
+        "RouteHelper.swift".to_string(),
+    ];
+    for page in &ast.pages {
+        swift_sources.push(format!("{}ViewController.swift", page.name));
+    }
+    for name in ast.components.keys() {
+        swift_sources.push(format!("{}View.swift", name));
+    }
+    for name in ast.stores.keys() {
+        swift_sources.push(format!("{}Store.swift", name));
+    }
+    if uses_camera       { swift_sources.push("CameraHelper.swift".to_string()); }
+    if uses_location     { swift_sources.push("LocationHelper.swift".to_string()); }
+    if uses_notification { swift_sources.push("NotificationHelper.swift".to_string()); }
+
+    // Plugin Swift sources — added to pbxproj and generated as output files
+    for (fname, content) in extra_swift_sources {
+        swift_sources.push(fname.to_string());
+        files.push(OutputFile {
+            path: fname.to_string(),
+            content: content.to_string(),
+        });
+    }
+
+    files.push(gen_xcodeproj_pbxproj(config, &swift_sources));
+    files.push(gen_xcscheme(config));
+    files.push(gen_xcworkspace_data(config));
+    files.push(gen_gitignore_ios());
 
     // Project scaffolding
-    files.push(gen_info_plist(config, uses_camera, uses_location, uses_http));
+    files.push(gen_info_plist_full(config, uses_camera, uses_audio_record,
+        uses_location, uses_location_bg, uses_notification, uses_bluetooth,
+        uses_contacts, uses_calendar, uses_photos, uses_health,
+        uses_speech, uses_face_id, uses_http));
     files.push(gen_app_delegate(bundle_id, app_name));
     files.push(gen_scene_delegate(bundle_id));
     files.push(gen_assets_xcassets());
@@ -81,18 +142,447 @@ pub fn gen_ios(ast: &AST, config: &IosConfig) -> Vec<OutputFile> {
         files.push(gen_store_swift(name, store, bundle_id));
     }
 
+    // :obj declarations → Swift Codable structs
+    for obj in ast.objects.values() {
+        let f = gen_obj_swift(obj);
+        swift_sources.push(f.path.clone());
+        files.push(f);
+    }
+
     // KeychainHelper (always generated — stores may need it)
     files.push(gen_keychain_helper());
+
+    // UIColor hex extension — needed by any component with color: style
+    files.push(gen_uicolor_extension());
 
     // Route helper (navigate() calls in Swift use this)
     files.push(gen_route_helper(ast));
 
     // Platform feature helpers
-    if uses_camera      { files.push(gen_camera_helper_swift(bundle_id)); }
-    if uses_location    { files.push(gen_location_helper_swift(bundle_id)); }
-    if uses_notification { files.push(gen_notification_helper_swift(bundle_id)); }
+    if uses_camera        { files.push(gen_camera_helper_swift(bundle_id)); }
+    if uses_location      { files.push(gen_location_helper_swift(bundle_id)); }
+    if uses_notification  { files.push(gen_notification_helper_swift(bundle_id)); }
 
     files
+}
+
+// ─── Xcode project file (project.pbxproj) ────────────────────────────────────
+// Without this file the output directory cannot be opened in Xcode at all.
+// We generate a minimal-but-complete single-target project referencing all Swift sources.
+
+/// Generate the .xcodeproj/project.pbxproj file for the app.
+/// Uses stable UUIDs derived from the app name so the file is deterministic.
+fn gen_xcodeproj_pbxproj(config: &IosConfig, swift_sources: &[String]) -> OutputFile {
+    let safe_name = config.app_name.replace(' ', "");
+    let bundle_id = &config.bundle_id;
+    let min_ios   = &config.min_ios;
+    let team_id   = &config.team_id;
+
+    // Generate deterministic-looking hex UUIDs from a base seed.
+    // In a real project each file gets a unique UUID; we derive them
+    // by hashing the filename with a simple deterministic scheme.
+    fn uuid(seed: u64) -> String {
+        let a = seed.wrapping_mul(0x9e3779b97f4a7c15u64);
+        let b = (seed ^ 0xdeadbeef) as u32;
+        format!("{a:016X}{b:08X}")
+    }
+
+    let project_uuid   = uuid(1);
+    let target_uuid    = uuid(2);
+    let build_cfg_list = uuid(3);
+    let debug_cfg      = uuid(4);
+    let release_cfg    = uuid(5);
+    let sources_phase  = uuid(6);
+    let resources_phase = uuid(7);
+    let frameworks_phase = uuid(8);
+    let main_group     = uuid(9);
+    let products_group = uuid(10);
+    let xcassets_ref   = uuid(11);
+    let info_plist_ref = uuid(12);
+    let product_ref    = uuid(14);
+
+    // Build file references and source build phases for every Swift file
+    let mut file_refs  = String::new();
+    let mut build_files = String::new();
+    let mut sources_list = String::new();
+
+    for (i, src) in swift_sources.iter().enumerate() {
+        let ref_id   = uuid(100 + i as u64);
+        let build_id = uuid(200 + i as u64);
+        file_refs.push_str(&format!(
+            "\t\t{ref_id} /* {src} */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = {src}; sourceTree = \"<group>\"; }};\n"
+        ));
+        build_files.push_str(&format!(
+            "\t\t{build_id} /* {src} in Sources */ = {{isa = PBXBuildFile; fileRef = {ref_id} /* {src} */; }};\n"
+        ));
+        sources_list.push_str(&format!(
+            "\t\t\t\t{build_id} /* {src} in Sources */,\n"
+        ));
+    }
+
+    // Group children list (all source refs + xcassets + info plist + launch screen)
+    let mut group_children = String::new();
+    for (i, src) in swift_sources.iter().enumerate() {
+        let ref_id = uuid(100 + i as u64);
+        group_children.push_str(&format!("\t\t\t\t{ref_id} /* {src} */,\n"));
+    }
+    group_children.push_str(&format!("\t\t\t\t{xcassets_ref} /* Assets.xcassets */,\n"));
+    group_children.push_str(&format!("\t\t\t\t{info_plist_ref} /* Info.plist */,\n"));
+    // LaunchScreen.storyboard removed — using UILaunchScreen dict in Info.plist instead
+
+    let xcassets_build_id = uuid(900);
+
+    let content = format!(r#"// !$*UTF8*$!
+{{
+	archiveVersion = 1;
+	classes = {{
+	}};
+	objectVersion = 56;
+	objects = {{
+
+/* Begin PBXBuildFile section */
+{build_files}		{xcassets_build_id} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = {xcassets_ref} /* Assets.xcassets */; }};
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+{file_refs}		{xcassets_ref} /* Assets.xcassets */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; }};
+		{info_plist_ref} /* Info.plist */ = {{isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = {safe_name}/Info.plist; sourceTree = "<group>"; }};
+		{product_ref} /* {safe_name}.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = {safe_name}.app; sourceTree = BUILT_PRODUCTS_DIR; }};
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		{frameworks_phase} /* Frameworks */ = {{
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		{main_group} = {{
+			isa = PBXGroup;
+			children = (
+{group_children}			);
+			sourceTree = "<group>";
+		}};
+		{products_group} /* Products */ = {{
+			isa = PBXGroup;
+			children = (
+				{product_ref} /* {safe_name}.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		}};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		{target_uuid} /* {safe_name} */ = {{
+			isa = PBXNativeTarget;
+			buildConfigurationList = {build_cfg_list} /* Build configuration list for PBXNativeTarget "{safe_name}" */;
+			buildPhases = (
+				{sources_phase} /* Sources */,
+				{frameworks_phase} /* Frameworks */,
+				{resources_phase} /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = {safe_name};
+			productName = {safe_name};
+			productReference = {product_ref} /* {safe_name}.app */;
+			productType = "com.apple.product-type.application";
+		}};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		{project_uuid} /* Project object */ = {{
+			isa = PBXProject;
+			attributes = {{
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {{
+					{target_uuid} = {{
+						CreatedOnToolsVersion = 15.0;
+						DevelopmentTeam = {team_id};
+					}};
+				}};
+			}};
+			buildConfigurationList = {build_cfg_list};
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = {main_group};
+			productRefGroup = {products_group} /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				{target_uuid} /* {safe_name} */,
+			);
+		}};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		{resources_phase} /* Resources */ = {{
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				{xcassets_build_id} /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		{sources_phase} /* Sources */ = {{
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+{sources_list}			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		{debug_cfg} /* Debug */ = {{
+			isa = XCBuildConfiguration;
+			buildSettings = {{
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = {team_id};
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = {safe_name}/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = {min_ios};
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			}};
+			name = Debug;
+		}};
+		{release_cfg} /* Release */ = {{
+			isa = XCBuildConfiguration;
+			buildSettings = {{
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = {team_id};
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = {safe_name}/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = {min_ios};
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = {bundle_id};
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			}};
+			name = Release;
+		}};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		{build_cfg_list} /* Build configuration list for PBXNativeTarget "{safe_name}" */ = {{
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				{debug_cfg} /* Debug */,
+				{release_cfg} /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		}};
+/* End XCConfigurationList section */
+	}};
+	rootObject = {project_uuid} /* Project object */;
+}}
+"#);
+
+    OutputFile {
+        path: format!("{safe_name}.xcodeproj/project.pbxproj"),
+        content,
+    }
+}
+
+/// Generate the .xcscheme file so Xcode knows how to build and run the app.
+fn gen_xcscheme(config: &IosConfig) -> OutputFile {
+    let safe_name = config.app_name.replace(' ', "");
+    fn uuid(seed: u64) -> String {
+        let a = seed.wrapping_mul(0x9e3779b97f4a7c15u64);
+        let b = (seed ^ 0xdeadbeef) as u32;
+        format!("{a:016X}{b:08X}")
+    }
+    let target_uuid = uuid(2);
+    let content = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<Scheme
+   LastUpgradeVersion = "1500"
+   version = "1.7">
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES">
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "{target_uuid}"
+               BuildableName = "{safe_name}.app"
+               BlueprintName = "{safe_name}"
+               ReferencedContainer = "container:{safe_name}.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldAutocreateTestPlan = "YES">
+   </TestAction>
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal"
+      allowLocationSimulation = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "{target_uuid}"
+            BuildableName = "{safe_name}.app"
+            BlueprintName = "{safe_name}"
+            ReferencedContainer = "container:{safe_name}.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction
+      buildConfiguration = "Release"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      savedToolIdentifier = ""
+      useCustomWorkingDirectory = "NO"
+      debugDocumentVersioning = "YES">
+   </ProfileAction>
+   <AnalyzeAction
+      buildConfiguration = "Debug">
+   </AnalyzeAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+   </ArchiveAction>
+</Scheme>
+"#);
+    OutputFile {
+        path: format!("{safe_name}.xcodeproj/xcshareddata/xcschemes/{safe_name}.xcscheme"),
+        content,
+    }
+}
+
+/// Generate xcworkspace/contents.xcworkspacedata so `xcodebuild -workspace` works.
+fn gen_xcworkspace_data(config: &IosConfig) -> OutputFile {
+    let safe_name = config.app_name.replace(' ', "");
+    OutputFile {
+        path: format!("{safe_name}.xcodeproj/project.xcworkspace/contents.xcworkspacedata"),
+        content: format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "self:{safe_name}.xcodeproj">
+   </FileRef>
+</Workspace>
+"#),
+    }
+}
+
+/// Generate LaunchScreen.storyboard — required by Info.plist UILaunchStoryboardName key.
+/// Uses a minimal but ibtool-compatible format. If ibtool rejects it, the project
+/// still opens fine in Xcode and the storyboard can be recreated via the UI.
+fn gen_launch_screen_storyboard(safe_name: &str) -> OutputFile {
+    OutputFile {
+        // Written to the {AppName}/ subfolder, consistent with Info.plist and
+        // referenced via INFOPLIST_FILE path in the Xcode build settings.
+        path: format!("{safe_name}/LaunchScreen.storyboard"),
+        // This is a minimal valid storyboard that Xcode 14+ ibtool accepts.
+        content: r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="32700.99.1234" targetRuntime="AppleCocoa" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+    <device id="retina6_12" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22684.4"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <scene sceneID="EHf-IW-A2E">
+            <objects>
+                <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <viewLayoutGuide key="safeAreaLayoutGuide" id="Bcu-3y-fUS"/>
+                        <color key="backgroundColor" systemColor="systemBackgroundColor"/>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="53" y="375"/>
+        </scene>
+    </scenes>
+</document>
+"#
+        .to_string(),
+    }
+}
+
+/// .gitignore for the generated iOS project.
+fn gen_gitignore_ios() -> OutputFile {
+    OutputFile {
+        path: ".gitignore".to_string(),
+        content: r#"# Generated by Frame framework
+.DS_Store
+/.build
+/Pods
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+*.xcscmblueprint
+"#
+        .to_string(),
+    }
 }
 
 // ─── Feature detection helpers ────────────────────────────────────────────────
@@ -119,17 +609,92 @@ fn stmts_use_call(stmts: &[Stmt], name: &str) -> bool {
 
 // ─── Info.plist ───────────────────────────────────────────────────────────────
 
+// ─── Info.plist ───────────────────────────────────────────────────────────────
+
+/// Simplified shim kept for backward-compatible unit tests.
 fn gen_info_plist(config: &IosConfig, uses_camera: bool, uses_location: bool, uses_http: bool) -> OutputFile {
+    gen_info_plist_full(config, uses_camera, false, uses_location, false, false,
+        false, false, false, false, false, false, false, uses_http)
+}
+
+/// Full Info.plist generator covering every iOS privacy key category.
+#[allow(clippy::too_many_arguments)]
+fn gen_info_plist_full(
+    config: &IosConfig,
+    uses_camera: bool,
+    uses_audio_record: bool,
+    uses_location: bool,
+    uses_location_bg: bool,
+    uses_notification: bool,
+    uses_bluetooth: bool,
+    uses_contacts: bool,
+    uses_calendar: bool,
+    uses_photos: bool,
+    uses_health: bool,
+    uses_speech: bool,
+    uses_face_id: bool,
+    uses_http: bool,
+) -> OutputFile {
     let mut extras = String::new();
+
+    // ── Camera & Media ─────────────────────────────────────────────────────────
     if uses_camera {
-        extras.push_str("\t<key>NSCameraUsageDescription</key>\n\t<string>This app uses the camera.</string>\n");
+        extras.push_str("\t<key>NSCameraUsageDescription</key>\n\t<string>This app uses the camera to capture photos and videos.</string>\n");
+        extras.push_str("\t<key>NSPhotoLibraryAddUsageDescription</key>\n\t<string>This app saves photos and videos to your library.</string>\n");
     }
+    if uses_audio_record {
+        extras.push_str("\t<key>NSMicrophoneUsageDescription</key>\n\t<string>This app uses the microphone to record audio.</string>\n");
+    }
+    if uses_photos {
+        extras.push_str("\t<key>NSPhotoLibraryUsageDescription</key>\n\t<string>This app accesses your photo library.</string>\n");
+    }
+
+    // ── Location ───────────────────────────────────────────────────────────────
     if uses_location {
-        extras.push_str("\t<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>This app uses your location.</string>\n");
+        extras.push_str("\t<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>This app uses your location while in use.</string>\n");
     }
+    if uses_location_bg {
+        extras.push_str("\t<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>\n\t<string>This app uses your location in the background.</string>\n");
+        extras.push_str("\t<key>NSLocationAlwaysUsageDescription</key>\n\t<string>This app uses your location in the background.</string>\n");
+    }
+
+    // ── Contacts & Calendar ────────────────────────────────────────────────────
+    if uses_contacts {
+        extras.push_str("\t<key>NSContactsUsageDescription</key>\n\t<string>This app accesses your contacts.</string>\n");
+    }
+    if uses_calendar {
+        extras.push_str("\t<key>NSCalendarsUsageDescription</key>\n\t<string>This app accesses your calendar.</string>\n");
+        extras.push_str("\t<key>NSRemindersUsageDescription</key>\n\t<string>This app accesses your reminders.</string>\n");
+    }
+
+    // ── Bluetooth ──────────────────────────────────────────────────────────────
+    if uses_bluetooth {
+        extras.push_str("\t<key>NSBluetoothAlwaysUsageDescription</key>\n\t<string>This app uses Bluetooth to connect to nearby devices.</string>\n");
+        extras.push_str("\t<key>NSBluetoothPeripheralUsageDescription</key>\n\t<string>This app uses Bluetooth peripherals.</string>\n");
+    }
+
+    // ── Health & Activity ──────────────────────────────────────────────────────
+    if uses_health {
+        extras.push_str("\t<key>NSHealthShareUsageDescription</key>\n\t<string>This app reads health and activity data.</string>\n");
+        extras.push_str("\t<key>NSHealthUpdateUsageDescription</key>\n\t<string>This app writes health and activity data.</string>\n");
+        extras.push_str("\t<key>NSMotionUsageDescription</key>\n\t<string>This app tracks motion and fitness activity.</string>\n");
+    }
+
+    // ── Speech Recognition ─────────────────────────────────────────────────────
+    if uses_speech {
+        extras.push_str("\t<key>NSSpeechRecognitionUsageDescription</key>\n\t<string>This app uses speech recognition.</string>\n");
+    }
+
+    // ── Face ID / Biometrics ───────────────────────────────────────────────────
+    if uses_face_id {
+        extras.push_str("\t<key>NSFaceIDUsageDescription</key>\n\t<string>This app uses Face ID for authentication.</string>\n");
+    }
+
+    // ── Network ────────────────────────────────────────────────────────────────
     if uses_http {
         extras.push_str("\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsArbitraryLoads</key>\n\t\t<true/>\n\t</dict>\n");
     }
+
     OutputFile {
         path: format!("{}/Info.plist", config.app_name.replace(' ', "")),
         content: format!(r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -144,10 +709,8 @@ fn gen_info_plist(config: &IosConfig, uses_camera: bool, uses_location: bool, us
 	<string>{build}</string>
 	<key>CFBundleName</key>
 	<string>{name}</string>
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
-	<key>UIMainStoryboardFile</key>
-	<string>Main</string>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>MinimumOSVersion</key>
 	<string>{min_ios}</string>
 {extras}</dict>
@@ -166,7 +729,8 @@ fn gen_info_plist(config: &IosConfig, uses_camera: bool, uses_location: bool, us
 
 fn gen_app_delegate(bundle_id: &str, app_name: &str) -> OutputFile {
     OutputFile {
-        path: format!("{}/AppDelegate.swift", app_name.replace(' ', "")),
+        // Write to root alongside all other generated Swift files
+        path: "AppDelegate.swift".to_string(),
         content: format!(r#"// AppDelegate.swift — {app_name}
 import UIKit
 
@@ -1241,6 +1805,13 @@ fn emit_swift_value(v: &Value) -> String {
 pub fn emit_swift_stmt(stmt: &Stmt, indent: usize) -> String {
     let pad = "    ".repeat(indent);
     match stmt {
+        Stmt::VarDecl(vd) => {
+            let (sw_type, sw_default) = swift_type_default(&vd.type_);
+            match &vd.initializer {
+                Some(init) => format!("{pad}var {}: {sw_type} = {}\n", vd.name, emit_swift_expr(init)),
+                None => format!("{pad}var {}: {sw_type} = {sw_default}\n", vd.name),
+            }
+        }
         Stmt::Assign(name, expr)  => format!("{pad}{name} = {}\n", emit_swift_expr(expr)),
         Stmt::Return(expr)        => format!("{pad}return {}\n", emit_swift_expr(expr)),
         Stmt::Call(c)             => format!("{pad}{}({})\n", c.func, c.args.iter().map(|a| emit_swift_expr(a)).collect::<Vec<_>>().join(", ")),
@@ -1273,6 +1844,14 @@ pub fn emit_swift_stmt(stmt: &Stmt, indent: usize) -> String {
                 format!(" defer {{\n{fs}{pad}}}")
             }).unwrap_or_default();
             format!("{pad}do {{\n{b}{pad}}} catch let {catch_param} {{\n{c}{pad}}}{f}\n")
+        }
+        Stmt::PluginCall(pc) => {
+            // Emit plugin bridge call: resolve to the Swift method from the plugin's ios/ bridge
+            let params_str: String = pc.params.iter()
+                .map(|(k, v)| format!("{}: {}", k, emit_swift_expr(v)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{pad}{}Plugin.{}({})\n", snake_to_pascal(&pc.plugin_name), pc.method, params_str)
         }
     }
 }
@@ -1345,8 +1924,9 @@ fn swift_type_default(t: &FRType) -> (&'static str, &'static str) {
         FRType::Int          => ("Int", "0"),
         FRType::Float        => ("Double", "0.0"),
         FRType::Bool         => ("Bool", "false"),
-        FRType::Object       => ("[String: Any]", "[:]"),
-        FRType::List         => ("[Any]", "[]"),
+        // object and list default to nil-able optionals so `= null` in .fr works
+        FRType::Object       => ("[String: Any]?", "nil"),
+        FRType::List         => ("[Any]?", "nil"),
         FRType::Nullable(_)  => ("Any?", "nil"),
     }
 }
@@ -1366,6 +1946,61 @@ fn to_var_name(s: &str) -> String {
         }
     }
     result
+}
+
+/// snake_case / kebab-case → PascalCase (for plugin class names like FrameMapsPlugin).
+fn snake_to_pascal(s: &str) -> String {
+    s.split(|c: char| c == '_' || c == '-' || c == ':')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().to_string() + chars.as_str(),
+            }
+        })
+        .collect()
+}
+
+// ─── :obj code generator (iOS) ────────────────────────────────────────────────
+
+/// Generate a Swift struct for a `:obj` declaration.
+/// e.g. `:obj User { id: string  name: string  email: string? }`
+/// → a Codable Swift struct with CodingKeys
+pub fn gen_obj_swift(obj: &ObjDef) -> OutputFile {
+    let fields: Vec<String> = obj.fields.iter().map(|f| {
+        let (swift_t, _) = swift_type_default(&f.type_);
+        if f.optional {
+            format!("    var {}: {}?", f.name, swift_t.trim_end_matches('?'))
+        } else {
+            format!("    var {}: {}", f.name, swift_t.trim_end_matches('?'))
+        }
+    }).collect();
+
+    let coding_keys: Vec<String> = obj.fields.iter().map(|f| {
+        format!("        case {} = \"{}\"", f.name, f.name)
+    }).collect();
+
+    OutputFile {
+        path: format!("{}.swift", obj.name),
+        content: format!(
+r#"import Foundation
+
+/// {name} — generated from :obj declaration in Frame source.
+/// Do not edit manually; re-run `frame build` to regenerate.
+struct {name}: Codable {{
+{fields}
+
+    enum CodingKeys: String, CodingKey {{
+{coding_keys}
+    }}
+}}
+"#,
+            name        = obj.name,
+            fields      = fields.join("\n"),
+            coding_keys = coding_keys.join("\n"),
+        ),
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -1597,6 +2232,42 @@ mod tests {
 }
 
 // ─── Task 13: KeychainHelper + route param passing ────────────────────────────
+
+/// UIColor hex extension — lets generated code call UIColor(hex: "#RRGGBB").
+pub fn gen_uicolor_extension() -> OutputFile {
+    OutputFile {
+        path: "UIColorExtension.swift".to_string(),
+        content: concat!(
+            "import UIKit\n\n",
+            "extension UIColor {\n",
+            "    // Init from a CSS hex string like #RRGGBB or #RRGGBBAA\n",
+            "    convenience init(hex: String) {\n",
+            "        var h = hex.trimmingCharacters(in: .whitespacesAndNewlines)\n",
+            "        if h.hasPrefix(\"#\") { h = String(h.dropFirst()) }\n",
+            "        let scanner = Scanner(string: h)\n",
+            "        var rgba: UInt64 = 0\n",
+            "        scanner.scanHexInt64(&rgba)\n",
+            "        let r, g, b, a: CGFloat\n",
+            "        switch h.count {\n",
+            "        case 6:\n",
+            "            r = CGFloat((rgba >> 16) & 0xFF) / 255\n",
+            "            g = CGFloat((rgba >>  8) & 0xFF) / 255\n",
+            "            b = CGFloat( rgba        & 0xFF) / 255\n",
+            "            a = 1.0\n",
+            "        case 8:\n",
+            "            r = CGFloat((rgba >> 24) & 0xFF) / 255\n",
+            "            g = CGFloat((rgba >> 16) & 0xFF) / 255\n",
+            "            b = CGFloat((rgba >>  8) & 0xFF) / 255\n",
+            "            a = CGFloat( rgba        & 0xFF) / 255\n",
+            "        default:\n",
+            "            r = 1; g = 1; b = 1; a = 1\n",
+            "        }\n",
+            "        self.init(red: r, green: g, blue: b, alpha: a)\n",
+            "    }\n",
+            "}\n"
+        ).to_string(),
+    }
+}
 
 /// Generate a KeychainHelper.swift utility file.
 pub fn gen_keychain_helper() -> OutputFile {

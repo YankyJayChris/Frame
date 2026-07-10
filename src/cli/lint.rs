@@ -28,7 +28,7 @@
 
 use crate::parser::{AST, parse_project};
 use crate::parser::ast::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 // ─── Severity / Diagnostic ────────────────────────────────────────────────────

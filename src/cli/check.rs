@@ -39,6 +39,7 @@ impl CheckResult {
 
 // ─── Tool detection helpers ───────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn which(cmd: &str) -> Option<String> {
     let output = Command::new("which").arg(cmd).output().ok()?;
     if output.status.success() {
@@ -102,7 +103,7 @@ fn check_android_sdk() -> CheckResult {
 
     match sdk_root {
         Some(path) => {
-            let tools_path = std::path::Path::new(&path).join("tools").join("bin");
+            let _tools_path = std::path::Path::new(&path).join("tools").join("bin");
             let platform_tools = std::path::Path::new(&path).join("platform-tools").join("adb");
             if platform_tools.exists() {
                 CheckResult::ok("Android SDK", &format!("Found at {path}"))

@@ -6,7 +6,7 @@
 // ── Whitespace & Comments (silent) ──────────────────────────────────────────
 
 WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
-COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n"? }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* ~ "\n"? | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // ── Atomic terminals ─────────────────────────────────────────────────────────
 
@@ -53,6 +53,7 @@ file = { SOI ~ top_level_decl* ~ EOI }
 top_level_decl = _{
     vars_block
   | i18n_block
+  | obj_block
   | store_block
   | import_decl
   | const_decl
@@ -135,6 +136,23 @@ typography_prop = {
 }
 
 // ============================================================================
+// :obj BLOCK — named data model / domain entity
+// ============================================================================
+
+/// :obj TypeName { fieldName: type  otherField: type? }
+/// Fields may be marked optional with a trailing ?
+/// Compiles to: Kotlin data class, Swift struct
+obj_block = {
+    ":obj" ~ ident ~ "{" ~ obj_field* ~ "}"
+}
+
+obj_field = {
+    ident ~ ":" ~ type_name ~ opt_marker? ~ ","?
+}
+
+opt_marker = { "?" }
+
+// ============================================================================
 // :store BLOCK
 // ============================================================================
 
@@ -183,8 +201,11 @@ type_name = { "int" | "float" | "bool" | "string" | "object" | "list" | "null" |
 // ============================================================================
 
 stmt = _{
-    wait_fetch_stmt
+    var_decl
+  | wait_fetch_stmt
   | wait_call_stmt
+  | navigate_stmt
+  | navigate_back_stmt
   | assign_stmt
   | if_stmt
   | for_stmt
@@ -192,7 +213,17 @@ stmt = _{
   | try_catch_stmt
   | return_stmt
   | call_stmt
+  | plugin_call
 }
+
+/// navigate("/path") as a standalone statement
+navigate_stmt = { "navigate" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_back() as a standalone statement
+navigate_back_stmt = { "navigate_back" ~ "(" ~ ")" }
+
+/// :var x: type = expr
+var_decl = { ":var" ~ ident ~ ":" ~ type_name ~ ("=" ~ expr)? }
 
 /// x = expr
 assign_stmt = { ident ~ "=" ~ expr }
@@ -202,9 +233,11 @@ return_stmt = { "return" ~ expr }
 
 /// if expr { stmts } else { stmts }
 if_stmt = {
-    "if" ~ expr ~ "{" ~ stmt* ~ "}" ~
-    ("else" ~ "{" ~ stmt* ~ "}")?
+    "if" ~ expr ~ if_then_block ~
+    ("else" ~ if_else_block)?
 }
+if_then_block = { "{" ~ stmt* ~ "}" }
+if_else_block = { "{" ~ stmt* ~ "}" }
 
 /// for item in list_expr { stmts }
 for_stmt = { "for" ~ ident ~ "in" ~ expr ~ "{" ~ stmt* ~ "}" }
@@ -216,10 +249,13 @@ switch_case = { "case" ~ expr ~ "=>" ~ "{" ~ stmt* ~ "}" }
 
 /// try { stmts } catch (err) { stmts } with optional finally { stmts }
 try_catch_stmt = {
-    "try" ~ "{" ~ stmt* ~ "}" ~
-    "catch" ~ "(" ~ ident ~ ")" ~ "{" ~ stmt* ~ "}" ~
-    ("finally" ~ "{" ~ stmt* ~ "}")?
+    "try" ~ try_body_block ~
+    "catch" ~ "(" ~ ident ~ ")" ~ catch_body_block ~
+    ("finally" ~ finally_body_block)?
 }
+try_body_block = { "{" ~ stmt* ~ "}" }
+catch_body_block = { "{" ~ stmt* ~ "}" }
+finally_body_block = { "{" ~ stmt* ~ "}" }
 
 /// wait:fetch(url, opts) with optional .then/.catch
 wait_fetch_stmt = { ident ~ "=" ~ wait_fetch_expr }
@@ -885,3 +921,18 @@ array_literal = { "[" ~ (expr ~ ","?)* ~ "]" }
 // plugin: { name: "frame_maps"  method: "showMap"  params: { lat: 37.7  lng: -122.4 } }
 // This is handled generically by component_node with kind "plugin"
 // and plugin_name_prop, plugin_method_prop, plugin_params_prop above.
+
+// ============================================================================
+// PLUGIN: CALL  (explicit plugin bridge call statement)
+// ============================================================================
+// plugin: { name: "frame_maps"  method: "showMap"  params: { lat: 37.7  lng: -122.4 } }
+
+plugin_call = {
+    "plugin:" ~ "{" ~
+    "name"   ~ ":" ~ string ~
+    "method" ~ ":" ~ ident ~
+    ("params" ~ ":" ~ "{" ~ plugin_param* ~ "}")? ~
+    "}"
+}
+
+plugin_param = { ident ~ ":" ~ expr }

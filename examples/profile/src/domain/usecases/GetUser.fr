@@ -1,0 +1,3 @@
+fn getUser: async (id: string) => {
+    result = wait:fetch("/api/users/$id", { method: "GET" })
+}

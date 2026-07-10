@@ -1,0 +1,28 @@
+:store AppStore {
+    user:             object = null
+    is_loading:       bool   = false
+    is_authenticated: bool   = false
+    auth_token:       string = ""
+    theme:            string = "light"
+
+    persist: {
+        auth_token: secure
+        theme:      local
+    }
+
+    fn setTheme: (t: string) => {
+        AppStore.theme = t
+    }
+
+    fn logout: () => {
+        AppStore.is_authenticated = false
+        AppStore.auth_token = ""
+        AppStore.user = null
+    }
+
+    fn loadUser: async (id: string) => {
+        AppStore.is_loading = true
+        AppStore.user = wait:fetch("/api/users/$id", { method: "GET" })
+        AppStore.is_loading = false
+    }
+}

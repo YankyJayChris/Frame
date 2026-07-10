@@ -9,6 +9,7 @@ use jni::JNIEnv;
 
 // macOS/iOS native bridge
 #[cfg(target_os = "macos")]
+#[allow(unused_imports)]
 use objc::{msg_send, sel, sel_impl};
 
 /// Open the device camera (stub for non-mobile targets).

@@ -3,6 +3,7 @@ use frame::cli::{
     Cli, Commands, PluginCommands, scaffold_project, Architecture, run_check,
     run_build, deploy_android, deploy_ios, run_tests, run_preview,
     run_lint, LintConfig,
+    plugin_add, plugin_remove, plugin_install, plugin_list, plugin_create, plugin_publish,
 };
 use std::path::Path;
 
@@ -11,18 +12,30 @@ fn main() {
 
     match cli.command {
         // ── frame start <name> ───────────────────────────────────────────────
-        Commands::Start { name } => {
-            println!("Select architecture:");
-            println!("  1) Clean Architecture  (recommended)");
-            println!("  2) MVC");
-            print!("Choice [1]: ");
-            let mut input = String::new();
-            let _ = std::io::stdin().read_line(&mut input);
-            let arch = match input.trim() {
-                "2" | "mvc" | "MVC" => Architecture::Mvc,
-                _                   => Architecture::CleanArchitecture,
+        Commands::Start { name, arch } => {
+            let chosen_arch = if let Some(a) = arch {
+                match a.to_lowercase().as_str() {
+                    "mvc" => Architecture::Mvc,
+                    "clean" | "clean-architecture" | "clean_architecture" => Architecture::CleanArchitecture,
+                    other => {
+                        eprintln!("Unknown architecture: {other}. Use --arch clean or --arch mvc");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Interactive prompt only when --arch not provided
+                println!("Select architecture:");
+                println!("  1) Clean Architecture  (recommended)");
+                println!("  2) MVC");
+                print!("Choice [1]: ");
+                let mut input = String::new();
+                let _ = std::io::stdin().read_line(&mut input);
+                match input.trim() {
+                    "2" | "mvc" | "MVC" => Architecture::Mvc,
+                    _                   => Architecture::CleanArchitecture,
+                }
             };
-            scaffold_project(&name, arch).unwrap_or_else(|e| {
+            scaffold_project(&name, chosen_arch).unwrap_or_else(|e| {
                 eprintln!("Error creating project: {e}");
                 std::process::exit(1);
             });
@@ -88,12 +101,30 @@ fn main() {
 
         // ── frame plugin ─────────────────────────────────────────────────────
         Commands::Plugin { action } => match action {
-            PluginCommands::Add { name }    => println!("Installing plugin: {name} (Task 19)"),
-            PluginCommands::Remove { name } => println!("Removing plugin: {name} (Task 19)"),
-            PluginCommands::Install         => println!("Installing all plugins from frame.config.json (Task 19)"),
-            PluginCommands::List            => println!("Listing installed plugins (Task 19)"),
-            PluginCommands::Create { name } => println!("Scaffolding plugin: {name} (Task 19)"),
-            PluginCommands::Publish         => println!("Publishing plugin (Task 19)"),
+            PluginCommands::Add { name } => {
+                let ok = plugin_add(&name, Path::new("."));
+                if !ok { std::process::exit(1); }
+            }
+            PluginCommands::Remove { name } => {
+                let ok = plugin_remove(&name, Path::new("."));
+                if !ok { std::process::exit(1); }
+            }
+            PluginCommands::Install => {
+                let ok = plugin_install(Path::new("."));
+                if !ok { std::process::exit(1); }
+            }
+            PluginCommands::List => {
+                let ok = plugin_list(Path::new("."));
+                if !ok { std::process::exit(1); }
+            }
+            PluginCommands::Create { name } => {
+                let ok = plugin_create(&name, Path::new("."));
+                if !ok { std::process::exit(1); }
+            }
+            PluginCommands::Publish => {
+                let ok = plugin_publish(Path::new("."));
+                if !ok { std::process::exit(1); }
+            }
         },
     }
 }

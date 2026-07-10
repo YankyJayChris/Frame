@@ -1,0 +1,12 @@
+:store UserStore {
+    user:       object = null
+    is_loading: bool   = false
+    error:      string = ""
+
+    fn load: async (id: string) => {
+        UserStore.is_loading = true
+        UserStore.error = ""
+        UserStore.user = wait:fetch("/api/users/$id", { method: "GET" })
+        UserStore.is_loading = false
+    }
+}

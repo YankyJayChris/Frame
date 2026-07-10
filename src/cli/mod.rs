@@ -20,14 +20,16 @@ pub mod deploy;
 pub mod test_runner;
 pub mod preview;
 pub mod lint;
+pub mod plugin;
 
-pub use start::{scaffold_project, Architecture};
+pub use start::{scaffold_project, scaffold_project_in, Architecture};
 pub use check::run_check;
 pub use build::run_build;
 pub use deploy::{deploy_android, deploy_ios};
 pub use test_runner::run_tests;
 pub use preview::run_preview;
 pub use lint::{run_lint, LintConfig};
+pub use plugin::{plugin_add, plugin_remove, plugin_install, plugin_list, plugin_create, plugin_publish};
 
 /// The Frame framework CLI.
 #[derive(Parser, Debug)]
@@ -43,6 +45,9 @@ pub enum Commands {
     Start {
         /// Project name / directory to create.
         name: String,
+        /// Architecture pattern: `clean` (default) or `mvc`. Skips the interactive prompt.
+        #[arg(long, value_name = "ARCH")]
+        arch: Option<String>,
     },
 
     /// Compile the current Frame project.

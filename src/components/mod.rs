@@ -6,7 +6,6 @@
 
 use crate::runtime::Canvas;
 use crate::styles::Styles;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::runtime::Animation;

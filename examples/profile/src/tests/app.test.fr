@@ -1,5 +1,0 @@
-describe: "Profile Page" => {
-  it: "displays user name" => {
-    expect: "name" .toBe: "John Doe"
-  }
-}

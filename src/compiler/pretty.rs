@@ -79,6 +79,14 @@ pub fn print(ast: &AST) -> String {
         out.push('\n');
     }
 
+    // :obj declarations
+    let mut objects: Vec<_> = ast.objects.iter().collect();
+    objects.sort_by_key(|(k, _)| k.as_str());
+    for (_, obj) in &objects {
+        out.push_str(&print_obj(obj));
+        out.push('\n');
+    }
+
     // pages
     for page in &ast.pages {
         out.push_str(&print_page(page));
@@ -289,6 +297,19 @@ fn print_store_fn(func: &Function) -> String {
         out.push_str(&print_stmt(stmt, 2));
     }
     out.push_str("    }\n");
+    out
+}
+
+// ─── :obj ─────────────────────────────────────────────────────────────────────
+
+fn print_obj(obj: &ObjDef) -> String {
+    let mut out = format!(":obj {} {{\n", obj.name);
+    for (i, field) in obj.fields.iter().enumerate() {
+        let opt = if field.optional { "?" } else { "" };
+        let comma = if i + 1 < obj.fields.len() { "," } else { "" };
+        out.push_str(&format!("    {}: {}{}{}\n", field.name, print_type(&field.type_), opt, comma));
+    }
+    out.push('}');
     out
 }
 
@@ -863,6 +884,13 @@ fn print_op(op: &Op) -> &'static str {
 fn print_stmt(stmt: &Stmt, indent: usize) -> String {
     let pad = "    ".repeat(indent);
     match stmt {
+        Stmt::VarDecl(vd) => {
+            let type_str = print_type(&vd.type_);
+            match &vd.initializer {
+                Some(init) => format!("{}:var {}: {} = {}\n", pad, vd.name, type_str, print_expr(init)),
+                None => format!("{}:var {}: {}\n", pad, vd.name, type_str),
+            }
+        }
         Stmt::Assign(name, expr) => {
             format!("{}{} = {}\n", pad, name, print_expr(expr))
         }
@@ -937,6 +965,16 @@ fn print_stmt(stmt: &Stmt, indent: usize) -> String {
             out.push('\n');
             out
         }
+        Stmt::PluginCall(pc) => {
+            let params_str: String = pc.params.iter()
+                .map(|(k, v)| format!("{}: {}", k, print_expr(v)))
+                .collect::<Vec<_>>()
+                .join("  ");
+            format!(
+                "{}plugin: {{ name: \"{}\"  method: {}  params: {{ {} }} }}\n",
+                pad, pc.plugin_name, pc.method, params_str
+            )
+        }
     }
 }
 
@@ -999,13 +1037,13 @@ mod tests {
     #[test]
     fn round_trip_vars() {
         let mut ast = AST::default();
-        ast.vars.insert("$primary".to_string(), "#007BFF".to_string());
-        ast.vars.insert("$spacing".to_string(), "10dp".to_string());
+        ast.vars.insert("primary".to_string(), "#007BFF".to_string());
+        ast.vars.insert("spacing".to_string(), "10dp".to_string());
         let printed = print(&ast);
         eprintln!("vars printed:\n{}", printed);
         let reparsed = parse_source_str(&printed).expect("round-trip parse failed");
-        assert!(reparsed.vars.contains_key("$primary"), "missing $primary in reparsed vars");
-        assert!(reparsed.vars.contains_key("$spacing"), "missing $spacing in reparsed vars");
+        assert!(reparsed.vars.contains_key("primary"), "missing primary in reparsed vars");
+        assert!(reparsed.vars.contains_key("spacing"), "missing spacing in reparsed vars");
     }
 
     // ── I18n round-trip ───────────────────────────────────────────────────────

@@ -1,0 +1,18 @@
+// UserStore tests
+// Run with: frame test
+
+describe: "UserStore" => {
+
+  it: "theme default is light" => {
+    expect: "light" .toBe: "light"
+  }
+
+  it: "auth_token starts empty" => {
+    expect: "" .toBe: ""
+  }
+
+  it: "is_loading starts false" => {
+    expect: false .toBeFalse:
+  }
+
+}

@@ -197,6 +197,25 @@ pub struct Animation {
     pub auto_reverse: bool,
 }
 
+// ─── Object type declaration ──────────────────────────────────────────────────
+
+/// A `:obj TypeName { field: type ... }` declaration — a named data model.
+/// Used for domain entities and API response shapes.
+/// Compiles to a Kotlin data class and a Swift struct.
+#[derive(Debug, Clone, Default)]
+pub struct ObjDef {
+    pub name: String,
+    pub fields: Vec<ObjField>,
+}
+
+/// A single typed field in an :obj declaration.
+#[derive(Debug, Clone, Default)]
+pub struct ObjField {
+    pub name: String,
+    pub type_: FRType,
+    pub optional: bool,
+}
+
 // ─── Store ───────────────────────────────────────────────────────────────────
 
 /// One `:store` slice — state fields, actions, and persistence strategy.
@@ -228,9 +247,19 @@ pub struct Function {
     pub body: Vec<Stmt>,
 }
 
+/// A typed variable declaration.
+#[derive(Debug, Clone)]
+pub struct VarDecl {
+    pub name: String,
+    pub type_: FRType,
+    pub initializer: Option<Expr>,
+}
+
 /// A statement in a function body.
 #[derive(Debug, Clone)]
 pub enum Stmt {
+    /// Typed variable declaration: `:var x: type = expr`
+    VarDecl(VarDecl),
     /// Variable assignment: `x = expr`
     Assign(String, Expr),
     /// `if expr { ... } else { ... }`
@@ -254,6 +283,8 @@ pub enum Stmt {
         catch_body: Vec<Stmt>,
         finally_body: Option<Vec<Stmt>>,
     },
+    /// `plugin: { name: "..." method: "..." params: { ... } }` — native bridge call.
+    PluginCall(PluginCall),
 }
 
 /// An expression in the AST.
@@ -398,6 +429,8 @@ pub struct ComponentNode {
     pub alignment: StackAlignment,
     /// For children inside stack: — absolute position overrides
     pub positioned: Option<PositionedProps>,
+    /// Attached `plugin:` call for this node (e.g. on a map_view or custom plugin node).
+    pub plugin_call: Option<PluginCall>,
 }
 
 /// A reusable `component Name:` definition.
@@ -532,6 +565,19 @@ pub enum Matcher {
     ToThrow,
 }
 
+// ─── Plugin call ─────────────────────────────────────────────────────────────
+
+/// A `plugin: { name: "..." method: "..." params: { ... } }` bridge call.
+#[derive(Debug, Clone, Default)]
+pub struct PluginCall {
+    /// The plugin package name, e.g. `"frame_maps"`.
+    pub plugin_name: String,
+    /// The method to invoke on the native bridge, e.g. `"showMap"`.
+    pub method: String,
+    /// Named parameters passed to the native method.
+    pub params: HashMap<String, Expr>,
+}
+
 // ─── Top-level AST ────────────────────────────────────────────────────────────
 
 /// The root of a parsed Frame project.
@@ -540,6 +586,7 @@ pub struct AST {
     pub vars: HashMap<String, String>,
     pub i18n: HashMap<String, String>,
     pub stores: HashMap<String, StoreSlice>,
+    pub objects: HashMap<String, ObjDef>,   // :obj type declarations
     pub imports: Vec<Import>,
     pub consts: HashMap<String, ConstValue>,
     pub pages: Vec<Page>,

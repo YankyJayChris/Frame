@@ -1,9 +1,9 @@
 //! `frame test` implementation — discover *.test.fr files, run describe:/it: blocks,
 //! assertion engine, mock: helper, --filter, --coverage, ✓/✗ output.
 
-use crate::parser::{parse_project, AST as _};
+use crate::parser::parse_project;
 use crate::parser::ast::{
-    TestSuite, TestCase as _, Assertion, Matcher, Expr, Value, Stmt as _,
+    TestSuite, Assertion, Matcher, Expr, Value,
 };
 
 use std::collections::HashMap;
@@ -31,10 +31,11 @@ pub struct MockConfig {
 // ─── Test context ─────────────────────────────────────────────────────────────
 
 /// Per-test execution context (clean state per `it:` block).
-struct TestContext {
+pub(crate) struct TestContext {
     /// Local variables set during the test run.
     vars: HashMap<String, Value>,
     /// Active mocks for this test.
+    #[allow(dead_code)]
     mocks: Vec<MockConfig>,
 }
 
@@ -46,7 +47,7 @@ impl TestContext {
     fn resolve(&self, expr: &Expr) -> Value {
         match expr {
             Expr::Literal(v) => v.clone(),
-            Expr::Var(name) => self.vars.get(name).cloned().unwrap_or(Value::Null),
+            Expr::Var(name) => self.vars.get(name).or_else(|| self.vars.get(name.trim_start_matches('$'))).cloned().unwrap_or(Value::Null),
             _ => Value::Null,
         }
     }
@@ -79,7 +80,7 @@ fn visit_dir_for_tests(dir: &Path, out: &mut Vec<PathBuf>) {
 // ─── Assertion engine ─────────────────────────────────────────────────────────
 
 /// Run a single assertion. Returns a `TestResult` with pass/fail.
-pub fn run_assertion(
+pub(crate) fn run_assertion(
     suite: &str,
     test: &str,
     assertion: &Assertion,
@@ -170,20 +171,9 @@ pub fn run_test_suite(suite: &TestSuite, extra_mocks: &[MockConfig]) -> Vec<Test
         // Execute body statements (variable assignments etc.)
         // In a full implementation this would run the interpreter.
         // For now we focus on assertions that work on literal/var values.
-        let mut any_fail = false;
         for assertion in &case.assertions {
             let result = run_assertion(&suite.name, &case.name, assertion, &ctx);
-            if !result.passed {
-                any_fail = true;
-                results.push(result);
-            } else {
-                results.push(TestResult {
-                    suite: suite.name.clone(),
-                    name: case.name.clone(),
-                    passed: true,
-                    message: String::new(),
-                });
-            }
+            results.push(result);
         }
 
         // If there are no assertions, the test passes by default

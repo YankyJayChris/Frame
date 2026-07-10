@@ -1,0 +1,40 @@
+:vars {
+    $primary:   "#007BFF"
+    $secondary: "#6C757D"
+}
+
+:breakpoints {
+    sm: 360dp
+    md: 600dp
+    lg: 900dp
+    xl: 1200dp
+}
+
+import { text, button, column, scaffold } "frame-core"
+import { HomePage } "./views/pages/HomePage.fr"
+
+page: {
+    name: "Splash"
+    route: "/"
+    before_enter: "checkAuth"
+    styles: { background: $primary  width: 100%  height: 100% }
+    children: [
+        column: {
+            styles: { width: 100%  height: 100% }
+            children: [
+                text: {
+                    content: "blog-app"
+                    styles: { color: "#FFFFFF"  font_size: 32sp  font_weight: "bold" }
+                }
+                button: {
+                    content: "Get Started"
+                    on_click: navigate("/home")
+                }
+            ]
+        }
+    ]
+}
+
+fn checkAuth: async () => {
+    navigate("/home")
+}

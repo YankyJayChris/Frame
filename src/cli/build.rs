@@ -257,6 +257,19 @@ fn run_build_once(project_dir: &Path, strict: bool, locale: &Option<String>) -> 
             eprintln!("warning: could not write {}", dest.display());
         }
     }
+    // Make gradlew executable on Unix
+    #[cfg(unix)]
+    {
+        let gradlew = android_out.join("gradlew");
+        if gradlew.exists() {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&gradlew) {
+                let mut perms = meta.permissions();
+                perms.set_mode(perms.mode() | 0o755);
+                fs::set_permissions(&gradlew, perms).ok();
+            }
+        }
+    }
 
     // 6. Generate iOS output
     let ios_cfg = ios_config(&config);

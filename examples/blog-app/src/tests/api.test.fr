@@ -1,0 +1,33 @@
+// API tests — mock: intercepts wait:fetch calls
+// Run with: frame test
+
+describe: "API" => {
+
+  it: "fetches user data" => {
+    mock: {
+      url: "/api/users/1"
+      response: { id: "1"  name: "Jane Smith"  email: "jane@example.com" }
+      status: 200
+    }
+    expect: "Jane Smith" .toBe: "Jane Smith"
+  }
+
+  it: "handles 404 gracefully" => {
+    mock: {
+      url: "/api/users/999"
+      response: { error: "Not found" }
+      status: 404
+    }
+    expect: "Not found" .toBe: "Not found"
+  }
+
+  it: "POST returns new resource" => {
+    mock: {
+      url: "/api/users"
+      response: { id: "2"  name: "New User" }
+      status: 201
+    }
+    expect: "New User" .toContain: "New"
+  }
+
+}

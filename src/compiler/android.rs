@@ -42,21 +42,75 @@ pub struct OutputFile {
 
 /// Generate all Android project files from an AST + config.
 pub fn gen_android(ast: &AST, config: &AndroidConfig) -> Vec<OutputFile> {
+    gen_android_with_plugins(ast, config, &[])
+}
+
+/// Like [`gen_android`] but also accepts extra Kotlin source files from plugins.
+/// Each entry is `(package_dir, filename, source_content)` — files are placed at
+/// `app/src/main/java/{package_dir}/{filename}`.
+pub fn gen_android_with_plugins(
+    ast: &AST,
+    config: &AndroidConfig,
+    extra_kt_sources: &[(&str, &str, &str)],
+) -> Vec<OutputFile> {
     let mut files: Vec<OutputFile> = Vec::new();
     let pkg = &config.application_id;
     let pkg_path = pkg.replace('.', "/");
 
-    // Detect features
-    let uses_fetch = ast_uses_fetch(ast);
-    let uses_camera = ast_uses_call(ast, "camera:capture");
-    let uses_location = ast_uses_call(ast, "location:get");
-    let uses_notification = ast_uses_call(ast, "notification:send");
+    // ── Feature detection ──────────────────────────────────────────────────────
+    // Network
+    let uses_fetch          = ast_uses_fetch(ast);
+    // Camera & media
+    let uses_camera         = ast_uses_call(ast, "camera:capture");
+    let uses_audio_record   = ast_uses_call(ast, "audio:record");
+    // Location
+    let uses_location_fine  = ast_uses_call(ast, "location:get")
+                           || ast_uses_call(ast, "location:watch");
+    let uses_location_coarse= ast_uses_call(ast, "location:coarse");
+    let uses_location_bg    = ast_uses_call(ast, "location:background");
+    // Notifications & connectivity
+    let uses_notification   = ast_uses_call(ast, "notification:send");
+    let uses_bt_connect     = ast_uses_call(ast, "bluetooth:connect");
+    let uses_bt_scan        = ast_uses_call(ast, "bluetooth:scan");
+    let uses_activity_rec   = ast_uses_call(ast, "health:steps");
+    // Storage
+    let uses_read_images    = ast_uses_call(ast, "storage:images") || uses_camera;
+    let uses_read_video     = ast_uses_call(ast, "storage:video");
+    let uses_read_audio     = ast_uses_call(ast, "storage:audio") || uses_audio_record;
+    let uses_manage_storage = ast_uses_call(ast, "storage:manage");
+    // Contacts & calendar
+    let uses_read_contacts  = ast_uses_call(ast, "contacts:read");
+    let uses_write_contacts = ast_uses_call(ast, "contacts:write");
+    let uses_read_calendar  = ast_uses_call(ast, "calendar:read");
+    let uses_write_calendar = ast_uses_call(ast, "calendar:write");
+    // Telephony
+    let uses_phone_state    = ast_uses_call(ast, "phone:state");
+    let uses_call_phone     = ast_uses_call(ast, "phone:call");
+    let uses_read_sms       = ast_uses_call(ast, "sms:read");
+    let uses_send_sms       = ast_uses_call(ast, "sms:send");
+    let uses_call_log       = ast_uses_call(ast, "phone:call_log");
 
     files.push(gen_settings_gradle(&config.app_name));
     files.push(gen_top_level_build_gradle());
     files.push(gen_app_build_gradle(config, uses_fetch));
     files.push(gen_gradle_wrapper());
-    files.push(gen_manifest(config, uses_fetch, uses_camera, uses_location, uses_notification));
+    files.push(gen_gradlew_script());
+    files.push(gen_gradlew_bat_script());
+    files.push(gen_res_themes(config));
+    files.push(gen_res_colors());
+    files.push(gen_res_strings(config));
+    files.push(gen_proguard_rules());
+    files.push(gen_gitignore_android());
+    files.push(gen_manifest_full(
+        config,
+        uses_fetch,
+        uses_camera, uses_audio_record,
+        uses_location_fine, uses_location_coarse, uses_location_bg,
+        uses_notification, uses_bt_connect, uses_bt_scan, uses_activity_rec,
+        uses_read_images, uses_read_video, uses_read_audio, uses_manage_storage,
+        uses_read_contacts, uses_write_contacts, uses_read_calendar, uses_write_calendar,
+        uses_phone_state, uses_call_phone, uses_read_sms, uses_send_sms, uses_call_log,
+    ));
     files.push(gen_main_application(pkg));
     files.push(gen_main_activity(ast, pkg));
 
@@ -68,20 +122,25 @@ pub fn gen_android(ast: &AST, config: &AndroidConfig) -> Vec<OutputFile> {
         files.push(gen_component_file(name, comp, pkg, &pkg_path));
     }
 
-    // Store ViewModels
     for (name, store) in &ast.stores {
         files.push(gen_store_viewmodel(name, store, pkg, &pkg_path));
     }
 
-    // Platform feature files
-    if uses_camera {
-        files.push(gen_camera_helper(pkg, &pkg_path));
+    // :obj type declarations → Kotlin data classes
+    for obj in ast.objects.values() {
+        files.push(gen_obj_data_class(obj, pkg, &pkg_path));
     }
-    if uses_location {
-        files.push(gen_location_helper(pkg, &pkg_path));
-    }
-    if uses_notification {
-        files.push(gen_notification_helper(pkg, &pkg_path));
+
+    if uses_camera        { files.push(gen_camera_helper(pkg, &pkg_path)); }
+    if uses_location_fine { files.push(gen_location_helper(pkg, &pkg_path)); }
+    if uses_notification  { files.push(gen_notification_helper(pkg, &pkg_path)); }
+
+    // Plugin Kotlin sources — placed in their own package directory
+    for (pkg_dir, fname, content) in extra_kt_sources {
+        files.push(OutputFile {
+            path: format!("app/src/main/java/{pkg_dir}/{fname}"),
+            content: content.to_string(),
+        });
     }
 
     files
@@ -304,6 +363,144 @@ zipStorePath=wrapper/dists
     }
 }
 
+/// Unix gradlew shell script — must be marked executable after writing (chmod +x).
+fn gen_gradlew_script() -> OutputFile {
+    OutputFile {
+        path: "gradlew".to_string(),
+        content: r#"#!/bin/sh
+# Gradle wrapper script for Unix/macOS
+# Generated by Frame framework
+
+APP_HOME="$(cd "$(dirname "$0")" && pwd -P)"
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+JAVACMD="${JAVA_HOME:+$JAVA_HOME/bin/java}"
+JAVACMD="${JAVACMD:-java}"
+
+exec "$JAVACMD" -classpath "$CLASSPATH" \
+  org.gradle.wrapper.GradleWrapperMain "$@"
+"#
+        .to_string(),
+    }
+}
+
+/// Windows gradlew.bat script.
+fn gen_gradlew_bat_script() -> OutputFile {
+    OutputFile {
+        path: "gradlew.bat".to_string(),
+        content: r#"@rem Gradle wrapper script for Windows
+@rem Generated by Frame framework
+@if "%DEBUG%"=="" @echo off
+setlocal
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
+
+set JAVACMD=java
+if defined JAVA_HOME set JAVACMD=%JAVA_HOME%\bin\java.exe
+
+%JAVACMD% -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
+"#
+        .to_string(),
+    }
+}
+
+/// res/values/themes.xml — required for Theme.FrameApp referenced in AndroidManifest.xml.
+fn gen_res_themes(config: &AndroidConfig) -> OutputFile {
+    let safe = config.app_name.replace(' ', "");
+    OutputFile {
+        path: "app/src/main/res/values/themes.xml".to_string(),
+        content: format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base app theme. Compose apps use this as the Activity window background only. -->
+    <style name="Theme.FrameApp" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/colorPrimary</item>
+    </style>
+    <style name="Theme.{safe}" parent="Theme.FrameApp" />
+</resources>
+"#
+        ),
+    }
+}
+
+/// res/values/colors.xml — standard Material color palette.
+fn gen_res_colors() -> OutputFile {
+    OutputFile {
+        path: "app/src/main/res/values/colors.xml".to_string(),
+        content: r#"<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#6200EE</color>
+    <color name="colorPrimaryVariant">#3700B3</color>
+    <color name="colorOnPrimary">#FFFFFF</color>
+    <color name="colorSecondary">#03DAC5</color>
+    <color name="colorSecondaryVariant">#018786</color>
+    <color name="colorOnSecondary">#000000</color>
+    <color name="colorError">#B00020</color>
+    <color name="colorOnError">#FFFFFF</color>
+    <color name="colorBackground">#FFFFFF</color>
+    <color name="colorOnBackground">#000000</color>
+    <color name="colorSurface">#FFFFFF</color>
+    <color name="colorOnSurface">#000000</color>
+</resources>
+"#
+        .to_string(),
+    }
+}
+
+/// res/values/strings.xml — app name and base strings.
+fn gen_res_strings(config: &AndroidConfig) -> OutputFile {
+    OutputFile {
+        path: "app/src/main/res/values/strings.xml".to_string(),
+        content: format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">{}</string>
+</resources>
+"#,
+            config.app_name
+        ),
+    }
+}
+
+/// proguard-rules.pro — required by app/build.gradle even when not used.
+fn gen_proguard_rules() -> OutputFile {
+    OutputFile {
+        path: "app/proguard-rules.pro".to_string(),
+        content: r#"# Generated by Frame framework
+# Add project-specific ProGuard rules here.
+# See: https://developer.android.com/studio/build/shrink-code
+
+# Keep all Frame-generated classes
+-keep class com.frame.** { *; }
+"#
+        .to_string(),
+    }
+}
+
+/// .gitignore for the generated Android project.
+fn gen_gitignore_android() -> OutputFile {
+    OutputFile {
+        path: ".gitignore".to_string(),
+        content: r#"# Generated by Frame framework
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+"#
+        .to_string(),
+    }
+}
+
 fn gen_manifest(
     config: &AndroidConfig,
     uses_fetch: bool,
@@ -311,26 +508,132 @@ fn gen_manifest(
     uses_location: bool,
     uses_notification: bool,
 ) -> OutputFile {
+    gen_manifest_full(config, uses_fetch, uses_camera, false, uses_location, false, false,
+        uses_notification, false, false, false, false, false, false, false, false, false,
+        false, false, false, false, false, false, false)
+}
+
+/// Full manifest generator covering every permission category.
+/// Called directly by gen_android; the simplified wrapper above exists for
+/// backward-compatible tests. New callers should detect features and call this.
+#[allow(clippy::too_many_arguments)]
+pub fn gen_manifest_full(
+    config: &AndroidConfig,
+    // Network
+    uses_fetch: bool,
+    // Camera & media
+    uses_camera: bool,
+    uses_audio_record: bool,
+    // Location
+    uses_location_fine: bool,
+    uses_location_coarse: bool,
+    uses_location_background: bool,
+    // Notifications & connectivity
+    uses_notification: bool,
+    uses_bluetooth_connect: bool,
+    uses_bluetooth_scan: bool,
+    uses_activity_recognition: bool,
+    // Storage
+    uses_read_images: bool,
+    uses_read_video: bool,
+    uses_read_audio_files: bool,
+    uses_manage_storage: bool,
+    // Contacts & calendar
+    uses_read_contacts: bool,
+    uses_write_contacts: bool,
+    uses_read_calendar: bool,
+    uses_write_calendar: bool,
+    // Telephony
+    uses_read_phone_state: bool,
+    uses_call_phone: bool,
+    uses_read_sms: bool,
+    uses_send_sms: bool,
+    uses_read_call_log: bool,
+) -> OutputFile {
     let mut perms = String::new();
+
+    // ── Network ───────────────────────────────────────────────────────────────
     if uses_fetch {
-        perms.push_str(
-            "    <uses-permission android:name=\"android.permission.INTERNET\" />\n",
-        );
+        perms.push_str("    <uses-permission android:name=\"android.permission.INTERNET\" />\n");
     }
+
+    // ── Camera & Media Capture ────────────────────────────────────────────────
     if uses_camera {
-        perms.push_str(
-            "    <uses-permission android:name=\"android.permission.CAMERA\" />\n",
-        );
+        perms.push_str("    <uses-permission android:name=\"android.permission.CAMERA\" />\n");
     }
-    if uses_location {
-        perms.push_str(
-            "    <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />\n",
-        );
+    if uses_audio_record {
+        perms.push_str("    <uses-permission android:name=\"android.permission.RECORD_AUDIO\" />\n");
     }
+
+    // ── Location ──────────────────────────────────────────────────────────────
+    if uses_location_fine {
+        perms.push_str("    <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />\n");
+        // Coarse is implied by fine but explicit is better practice
+        perms.push_str("    <uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />\n");
+    } else if uses_location_coarse {
+        perms.push_str("    <uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" />\n");
+    }
+    if uses_location_background {
+        perms.push_str("    <uses-permission android:name=\"android.permission.ACCESS_BACKGROUND_LOCATION\" />\n");
+    }
+
+    // ── Notifications & System ────────────────────────────────────────────────
     if uses_notification {
-        perms.push_str(
-            "    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n",
-        );
+        perms.push_str("    <uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\" />\n");
+    }
+    if uses_bluetooth_connect {
+        perms.push_str("    <uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" />\n");
+    }
+    if uses_bluetooth_scan {
+        perms.push_str("    <uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" />\n");
+    }
+    if uses_activity_recognition {
+        perms.push_str("    <uses-permission android:name=\"android.permission.ACTIVITY_RECOGNITION\" />\n");
+    }
+
+    // ── Storage & Media Files ─────────────────────────────────────────────────
+    if uses_read_images {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\" />\n");
+    }
+    if uses_read_video {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\" />\n");
+    }
+    if uses_read_audio_files {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_MEDIA_AUDIO\" />\n");
+    }
+    if uses_manage_storage {
+        perms.push_str("    <uses-permission android:name=\"android.permission.MANAGE_EXTERNAL_STORAGE\" />\n");
+    }
+
+    // ── Contacts & Calendar ───────────────────────────────────────────────────
+    if uses_read_contacts {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_CONTACTS\" />\n");
+    }
+    if uses_write_contacts {
+        perms.push_str("    <uses-permission android:name=\"android.permission.WRITE_CONTACTS\" />\n");
+    }
+    if uses_read_calendar {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_CALENDAR\" />\n");
+    }
+    if uses_write_calendar {
+        perms.push_str("    <uses-permission android:name=\"android.permission.WRITE_CALENDAR\" />\n");
+    }
+
+    // ── Telephony & Communications ────────────────────────────────────────────
+    if uses_read_phone_state {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_PHONE_STATE\" />\n");
+    }
+    if uses_call_phone {
+        perms.push_str("    <uses-permission android:name=\"android.permission.CALL_PHONE\" />\n");
+    }
+    if uses_read_sms {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_SMS\" />\n");
+    }
+    if uses_send_sms {
+        perms.push_str("    <uses-permission android:name=\"android.permission.SEND_SMS\" />\n");
+    }
+    if uses_read_call_log {
+        perms.push_str("    <uses-permission android:name=\"android.permission.READ_CALL_LOG\" />\n");
     }
 
     OutputFile {
@@ -1743,11 +2046,11 @@ fn emit_search_bar_node(node: &ComponentNode, pad: &str) -> String {
     format!("{pad}TextField(value = {value}, onValueChange = {{ {on_change} }}, placeholder = {{ Text({placeholder}) }}, leadingIcon = {{ Icon(Icons.Default.Search, null) }}, singleLine = true)\n")
 }
 
-fn emit_date_picker_node(node: &ComponentNode, pad: &str) -> String {
+fn emit_date_picker_node(_node: &ComponentNode, pad: &str) -> String {
     format!("{pad}DatePicker(state = rememberDatePickerState())\n")
 }
 
-fn emit_time_picker_node(node: &ComponentNode, pad: &str) -> String {
+fn emit_time_picker_node(_node: &ComponentNode, pad: &str) -> String {
     format!("{pad}TimeInput(state = rememberTimePickerState())\n")
 }
 
@@ -2001,6 +2304,7 @@ pub fn emit_screen_utilities(indent: usize) -> String {
 }
 
 /// Emit LaunchedEffect-based scroll event handlers.
+#[allow(dead_code)]
 fn emit_scroll_config(styles: &Styles, state_name: &str, pad: &str) -> String {
     let mut out = String::new();
     let inner = format!("{pad}    ");
@@ -2195,7 +2499,14 @@ fn emit_value(v: &Value) -> String {
 pub fn emit_stmt(stmt: &Stmt, indent: usize) -> String {
     let pad = "    ".repeat(indent);
     match stmt {
-        Stmt::Assign(name, expr) => format!("{pad}var {name} = {}\n", emit_expr(expr)),
+        Stmt::VarDecl(vd) => {
+            let kt_type = frtype_to_kotlin(&vd.type_);
+            match &vd.initializer {
+                Some(init) => format!("{pad}var {}: {kt_type} = {}\n", vd.name, emit_expr(init)),
+                None => format!("{pad}var {}: {kt_type} = {}\n", vd.name, default_for_type(&vd.type_)),
+            }
+        }
+        Stmt::Assign(name, expr) => format!("{pad}{name} = {}\n", emit_expr(expr)),
         Stmt::Return(expr) => format!("{pad}return {}\n", emit_expr(expr)),
         Stmt::Call(c) => {
             let args: String = c.args.iter().map(|a| emit_expr(a)).collect::<Vec<_>>().join(", ");
@@ -2250,6 +2561,14 @@ pub fn emit_stmt(stmt: &Stmt, indent: usize) -> String {
             format!(
                 "{pad}try {{\n{body_stmts}{pad}}} catch ({catch_param}: Exception) {{\n{catch_stmts}{pad}}}{finally_part}\n"
             )
+        }
+        Stmt::PluginCall(pc) => {
+            // Emit plugin bridge call: resolve to the Kotlin method from the plugin's android/ bridge
+            let params_str: String = pc.params.iter()
+                .map(|(k, v)| format!("{} = {}", k, emit_expr(v)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{pad}{}Plugin.{}({params_str})\n", pascal_case(&pc.plugin_name), pc.method)
         }
     }
 }
@@ -2333,6 +2652,45 @@ fn pascal_case(s: &str) -> String {
             }
         })
         .collect()
+}
+
+// ─── :obj code generator (Android) ───────────────────────────────────────────
+
+/// Generate a Kotlin data class for a `:obj` declaration.
+/// e.g. `:obj User { id: string  name: string  email: string? }`
+/// → `data class User(val id: String, val name: String, val email: String?)`
+pub fn gen_obj_data_class(obj: &ObjDef, pkg: &str, pkg_path: &str) -> OutputFile {
+    let fields: Vec<String> = obj.fields.iter().map(|f| {
+        let kt = frtype_to_kotlin(&f.type_);
+        if f.optional {
+            format!("    val {}: {}?", f.name, kt)
+        } else {
+            format!("    val {}: {}", f.name, kt)
+        }
+    }).collect();
+
+    let fields_str = fields.join(",\n");
+
+    OutputFile {
+        path: format!("app/src/main/java/{pkg_path}/{}.kt", obj.name),
+        content: format!(
+r#"package {pkg}
+
+import com.google.gson.annotations.SerializedName
+
+/**
+ * {name} — generated from :obj declaration in Frame source.
+ * Do not edit manually; re-run `frame build` to regenerate.
+ */
+data class {name}(
+{fields}
+)
+"#,
+            pkg   = pkg,
+            name  = obj.name,
+            fields = fields_str,
+        ),
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -9,10 +9,10 @@ pub mod pretty;
 pub use pretty::print;
 
 pub mod android;
-pub use android::{gen_android, AndroidConfig, OutputFile};
+pub use android::{gen_android, gen_android_with_plugins, AndroidConfig, OutputFile};
 
 pub mod ios;
-pub use ios::{gen_ios, IosConfig};
+pub use ios::{gen_ios, gen_ios_with_plugins, IosConfig};
 
 pub mod overflow;
 pub use overflow::{inject_overflow_defaults, default_overflow, page_root_overflow,

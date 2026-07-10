@@ -3,7 +3,7 @@
 //! Injects per-component overflow defaults and emits compiler warnings
 //! for invalid overflow combinations. Used by both Android and iOS generators.
 
-use crate::parser::ast::{AST, ComponentNode, OverflowValue, Styles};
+use crate::parser::ast::{AST, ComponentNode, OverflowValue};
 use crate::parser::{FrameError, ErrorCategory};
 
 // ─── Default overflow per component kind ─────────────────────────────────────
@@ -18,6 +18,7 @@ const CONTAINER_KINDS: &[&str] = &[
 const SCROLL_KINDS: &[&str] = &["scroll_view", "list", "table", "refresh"];
 
 /// Leaf/interactive components default to `overflow: visible`.
+#[allow(dead_code)]
 const VISIBLE_KINDS: &[&str] = &[
     "text", "image", "icon", "button", "input", "dropdown", "divider",
     "spacer", "progress_bar", "progress_circle", "switch", "checkbox", "radio",

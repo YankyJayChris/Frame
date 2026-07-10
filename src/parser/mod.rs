@@ -6,7 +6,7 @@ pub mod ast;
 pub use ast::*;
 
 use pest::Parser;
-use pest::iterators::{Pair, Pairs};
+use pest::iterators::Pair;
 use pest_derive::Parser as PestParser;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -71,12 +71,13 @@ pub fn parse_source_str(source: &str) -> Result<AST, Vec<FrameError>> {
 /// Starts from `{dir}/src/project.fr`, walks imports recursively,
 /// and merges all file ASTs.
 pub fn parse_project(dir: &str) -> Result<AST, Vec<FrameError>> {
-    let entry = Path::new(dir).join("src").join("project.fr");
+    let root = Path::new(dir);
+    let entry = root.join("src").join("project.fr");
     let mut errors: Vec<FrameError> = Vec::new();
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut ast = AST::default();
 
-    parse_file_recursive(&entry, &mut ast, &mut errors, &mut visited);
+    parse_file_recursive(&entry, root, &mut ast, &mut errors, &mut visited);
 
     if errors.is_empty() {
         Ok(ast)
@@ -87,6 +88,7 @@ pub fn parse_project(dir: &str) -> Result<AST, Vec<FrameError>> {
 
 fn parse_file_recursive(
     path: &Path,
+    project_root: &Path,
     ast: &mut AST,
     errors: &mut Vec<FrameError>,
     visited: &mut HashSet<PathBuf>,
@@ -126,12 +128,24 @@ fn parse_file_recursive(
 
     // Resolve and recurse into imports
     for imp in &file_ast.imports {
-        if imp.path.starts_with("frame-core") || imp.path.starts_with("frame-") {
+        if imp.path == "frame-core" {
             // Built-in — skip file resolution
+        } else if imp.path.starts_with("frame-") {
+            // Check if this is an installed plugin: frame-camera → frame_modules/frame_camera/src/index.fr
+            let plugin_name = imp.path.strip_prefix("frame-").unwrap_or("");
+            let plugin_index = project_root
+                .join("frame_modules")
+                .join(format!("frame_{}", plugin_name.replace('-', "_")))
+                .join("src")
+                .join("index.fr");
+            if plugin_index.exists() {
+                parse_file_recursive(&plugin_index, project_root, ast, errors, visited);
+            }
+            // If plugin doesn't exist, silently skip (resolver will report missing imports)
         } else {
             let base = canonical.parent().unwrap_or(Path::new("."));
             let imp_path = base.join(&imp.path);
-            parse_file_recursive(&imp_path, ast, errors, visited);
+            parse_file_recursive(&imp_path, project_root, ast, errors, visited);
         }
     }
 
@@ -150,6 +164,7 @@ fn merge_ast(target: &mut AST, src: AST) {
     target.tests.extend(src.tests);
     target.breakpoints.extend(src.breakpoints);
     target.typography.extend(src.typography);
+    target.objects.extend(src.objects);
 }
 
 // ─── Top-level file parser ────────────────────────────────────────────────────
@@ -171,6 +186,10 @@ fn parse_source(source: &str, file_path: &str, errors: &mut Vec<FrameError>) -> 
                             Rule::store_block => {
                                 let s = parse_store_block(inner, errors, file_path);
                                 ast.stores.insert(s.name.clone(), s);
+                            }
+                            Rule::obj_block => {
+                                let o = parse_obj_block(inner, errors, file_path);
+                                ast.objects.insert(o.name.clone(), o);
                             }
                             Rule::import_decl => {
                                 ast.imports.push(parse_import_decl(inner));
@@ -225,7 +244,8 @@ fn parse_vars_block(pair: Pair<Rule>) -> HashMap<String, String> {
     for entry in pair.into_inner() {
         if entry.as_rule() == Rule::vars_entry {
             let mut inner = entry.into_inner();
-            let key = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let raw = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let key = raw.strip_prefix('$').unwrap_or(&raw).to_string();
             let val = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
             map.insert(key, val);
         }
@@ -377,6 +397,29 @@ fn parse_bp_override_as_typography(pair: Pair<Rule>) -> (String, TypographyStyle
         }
     }
     (name, style)
+}
+
+// ─── :obj block ───────────────────────────────────────────────────────────────
+
+/// Parse `:obj TypeName { field: type  other: type? }`
+fn parse_obj_block(pair: Pair<Rule>, _errors: &mut Vec<FrameError>, _file: &str) -> ObjDef {
+    let mut inner = pair.into_inner();
+    let name = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+    let mut fields = Vec::new();
+
+    for field_pair in inner {
+        if field_pair.as_rule() == Rule::obj_field {
+            let mut fp = field_pair.into_inner();
+            let field_name = fp.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let type_str   = fp.next().map(|p| p.as_str().trim().to_string()).unwrap_or_default();
+            // Check for trailing ? (optional marker) — grammar captures it as remaining token
+            let optional   = fp.next().map(|p| p.as_str() == "?").unwrap_or(false);
+            let type_ = parse_type_name(&type_str);
+            fields.push(ObjField { name: field_name, type_, optional });
+        }
+    }
+
+    ObjDef { name, fields }
 }
 
 // ─── :store block ─────────────────────────────────────────────────────────────
@@ -1143,6 +1186,9 @@ fn parse_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Opt
     // stmt is a SILENT rule (_) in the grammar, so it never shows up as a pair.
     // We receive the actual statement rule pairs directly.
     match pair.as_rule() {
+        Rule::var_decl => {
+            Some(parse_var_decl(pair))
+        }
         Rule::assign_stmt => {
             let mut pi = pair.into_inner();
             let name = pi.next().map(|p| p.as_str().to_string())?;
@@ -1194,30 +1240,57 @@ fn parse_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Opt
                 .unwrap_or_default();
             Some(Stmt::Call(CallExpr { func, args }))
         }
+        Rule::plugin_call => {
+            Some(parse_plugin_call(pair))
+        }
         _ => None,
     }
 }
 
+fn parse_plugin_call(pair: Pair<Rule>) -> Stmt {
+    let inner: Vec<_> = pair.into_inner().collect();
+    // plugin_call = { "plugin:" ~ "{" ~ "name" ~ ":" ~ string ~ "method" ~ ":" ~ ident ~ ("params" ~ ":" ~ "{" ~ plugin_param* ~ "}")? ~ "}" }
+    // children: string, ident, [plugin_param*]
+    let mut i = inner.into_iter();
+    let plugin_name = i.next()
+        .map(|p| strip_quotes(p.as_str()))
+        .unwrap_or_default();
+    let method = i.next()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    let mut params = HashMap::new();
+    for param in i {
+        let mut pi = param.into_inner();
+        let key = pi.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+        let val = pi.next().map(parse_expr).unwrap_or_default();
+        params.insert(key, val);
+    }
+    Stmt::PluginCall(PluginCall { plugin_name, method, params })
+}
+
+fn parse_var_decl(pair: Pair<Rule>) -> Stmt {
+    let mut pi = pair.into_inner();
+    // var_decl = { ":var" ~ ident ~ ":" ~ type_name ~ ("=" ~ expr)? }
+    // children: ident, type_name, [expr]
+    let name = pi.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+    let type_ = pi.next().map(|p| parse_type_name(p.as_str())).unwrap_or_default();
+    let initializer = pi.next().map(parse_expr);
+    Stmt::VarDecl(VarDecl { name, type_, initializer })
+}
+
 fn parse_if_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Stmt {
     let mut children = pair.into_inner();
-    // First child is the condition expr
+    // Grammar: "if" ~ expr ~ if_then_block ~ ("else" ~ if_else_block)?
+    // Children: expr, if_then_block, [if_else_block]
     let cond = children.next().map(parse_expr).unwrap_or_default();
-    let mut then_body: Vec<Stmt> = Vec::new();
-    let mut else_body: Option<Vec<Stmt>> = None;
 
-    // Since stmt is silent, we get: condition_expr, then_stmts..., [else_stmts...]
-    // The grammar: "if" ~ expr ~ "{" ~ stmt* ~ "}" ~ ("else" ~ "{" ~ stmt* ~ "}")?
-    // We need to split on where else block begins — but pest doesn't give us "else" tokens
-    // as inline literals don't produce pairs. Count all remaining pairs as stmts.
-    // The else clause requires a heuristic: collect all remaining stmt-like pairs.
-    // For simplicity: collect all into then_body (else detection needs grammar adjustment)
-    // HOWEVER: the grammar is non-atomic, so "else" text gets consumed silently.
-    // We collect all child stmts into then, since else detection requires grammar support.
-    // TODO: If grammar emits an else_block or similar, handle here.
-    for child in children {
-        let s = parse_stmt(child, errors, file);
-        then_body.extend(s);
-    }
+    let then_body: Vec<Stmt> = children.next()
+        .map(|b| b.into_inner().filter_map(|c| parse_stmt(c, errors, file)).collect())
+        .unwrap_or_default();
+
+    let else_body: Option<Vec<Stmt>> = children.next()
+        .map(|b| b.into_inner().filter_map(|c| parse_stmt(c, errors, file)).collect());
+
     Stmt::If(cond, then_body, else_body)
 }
 
@@ -1245,75 +1318,28 @@ fn parse_switch_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str)
 }
 
 fn parse_try_catch_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Stmt {
-    let (line, col) = pair.line_col();
+    // Grammar: "try" ~ try_body_block ~ "catch" ~ "(" ~ ident ~ ")" ~ catch_body_block ~ ("finally" ~ finally_body_block)?
+    // Children: try_body_block, ident(catch_param), catch_body_block, [finally_body_block]
+    let mut children = pair.into_inner();
 
-    // Grammar: "try" ~ "{" ~ stmt* ~ "}" ~ "catch" ~ "(" ~ ident ~ ")" ~ "{" ~ stmt* ~ "}" ~ ("finally" ~ "{" ~ stmt* ~ "}")?
-    // Since stmt = _{ ... } is silent, child pairs are: [try_stmts..., ident(catch_param), catch_stmts..., finally_stmts...]
-    // The ident (catch param) is the natural separator between try and catch bodies.
-    // "finally" is a string literal — no pair produced for it.
-    // We detect the finally boundary by counting: there's exactly ONE ident (the catch param).
-    // After that ident, stmts are catch stmts. There's no marker for finally.
-    //
-    // Limitation: since "finally" produces no pair, we can't distinguish catch stmts from
-    // finally stmts from the pair stream alone. We collect ALL post-catch stmts into catch_body
-    // and set finally_body = None unless the raw text contains "finally".
-    //
-    // For tests: try { x=1 } catch (e) { x=0 } finally { x=2 }
-    // pairs: assign_stmt(x=1), ident(e), assign_stmt(x=0), assign_stmt(x=2)
-    // We use the "finally" check on the raw text to split the post-catch stmts.
+    let try_body: Vec<Stmt> = children.next()
+        .map(|b| b.into_inner().filter_map(|c| parse_stmt(c, errors, file)).collect())
+        .unwrap_or_default();
 
-    let raw = pair.as_str();
-    let has_finally = raw.contains("finally");
-
-    let children: Vec<Pair<Rule>> = pair.into_inner().collect();
-
-    // Find the ident that is the catch parameter (first ident in children)
-    let catch_param_idx = children.iter().position(|p| p.as_rule() == Rule::ident);
-
-    let has_catch = catch_param_idx.is_some();
-    if !has_catch {
-        errors.push(FrameError::parse(file, line, col,
-            "try block is missing a required catch clause"));
-    }
-
-    let catch_idx = catch_param_idx.unwrap_or(children.len());
-    let catch_param = children.get(catch_idx)
+    let catch_param = children.next()
         .map(|p| p.as_str().to_string())
-        .unwrap_or_else(|| "err".to_string());
+        .unwrap_or_else(|| {
+            errors.push(FrameError::parse(file, 0, 0,
+                "try block is missing a required catch clause"));
+            "err".to_string()
+        });
 
-    let try_body: Vec<Stmt> = children[..catch_idx]
-        .iter()
-        .filter_map(|p| parse_stmt(p.clone(), errors, file))
-        .collect();
+    let catch_body: Vec<Stmt> = children.next()
+        .map(|b| b.into_inner().filter_map(|c| parse_stmt(c, errors, file)).collect())
+        .unwrap_or_default();
 
-    let post_catch: Vec<Stmt> = children[catch_idx+1..]
-        .iter()
-        .filter_map(|p| parse_stmt(p.clone(), errors, file))
-        .collect();
-
-    // If there's a finally, we need to split post_catch.
-    // Since we can't reliably split by pair position (finally has no marker),
-    // use the raw text positions: count stmts in catch block by scanning raw text.
-    // Simplified approach: if finally present, move the last stmt group to finally.
-    // For the test suite this works since tests are simple.
-    let (catch_body, finally_body) = if has_finally && !post_catch.is_empty() {
-        // heuristic: count stmts in catch block by looking at the raw text
-        // Find the catch block: between "catch (...) {" and "} finally"
-        let catch_block_len = if let Some(finally_pos) = raw.find("finally") {
-            // Count stmt pairs that appear before the finally keyword
-            let try_end_pos = raw.find("catch").unwrap_or(0);
-            let catch_content = &raw[try_end_pos..finally_pos];
-            // Count assignments/stmts in catch content (simplified: count "=" occurrences)
-            let n_catch = count_simple_stmts_in_raw(catch_content);
-            n_catch.min(post_catch.len())
-        } else {
-            post_catch.len()
-        };
-        let (c, f) = post_catch.split_at(catch_block_len);
-        (c.to_vec(), if f.is_empty() { None } else { Some(f.to_vec()) })
-    } else {
-        (post_catch, None)
-    };
+    let finally_body: Option<Vec<Stmt>> = children.next()
+        .map(|b| b.into_inner().filter_map(|c| parse_stmt(c, errors, file)).collect());
 
     Stmt::TryCatch {
         body: try_body,
@@ -1321,22 +1347,6 @@ fn parse_try_catch_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &s
         catch_body,
         finally_body,
     }
-}
-
-/// Heuristic: count statement-like constructs in a raw text snippet.
-fn count_simple_stmts_in_raw(raw: &str) -> usize {
-    // Count occurrences of '=' (assignments), 'return', call patterns
-    let mut count = 0;
-    let mut in_block = 0i32;
-    for ch in raw.chars() {
-        match ch {
-            '{' => in_block += 1,
-            '}' => { if in_block > 0 { in_block -= 1; } }
-            '=' if in_block == 0 => count += 1,
-            _ => {}
-        }
-    }
-    count
 }
 
 // ─── parse_expr ───────────────────────────────────────────────────────────────
@@ -1741,15 +1751,39 @@ mod tests {
     fn test_parse_vars_block() {
         let src = ":vars { $primary: \"#FF0000\"; $spacing: \"10dp\"; }";
         let ast = parse_ok(src);
-        assert!(ast.vars.contains_key("$primary"));
-        assert!(ast.vars.contains_key("$spacing"));
+        assert!(ast.vars.contains_key("primary"));
+        assert!(ast.vars.contains_key("spacing"));
+    }
+
+    #[test]
+    fn test_parse_vars_block_no_dollar() {
+        let src = ":vars { primary: \"#FF0000\"; spacing: \"10dp\"; }";
+        let ast = parse_ok(src);
+        assert!(ast.vars.contains_key("primary"));
+        assert!(ast.vars.contains_key("spacing"));
     }
 
     #[test]
     fn test_parse_vars_block_dimensions() {
         let src = ":vars { $gap: 8dp }";
         let ast = parse_ok(src);
-        assert!(ast.vars.contains_key("$gap"));
+        assert!(ast.vars.contains_key("gap"));
+    }
+
+    // ── :var declaration ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_var_decl_with_type_and_init() {
+        let src = "fn test: () => {\n    :var x: int = 42\n    return x\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
+    #[test]
+    fn test_var_decl_no_init() {
+        let src = "fn test: () => {\n    :var name: string\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
     }
 
     // ── :i18n block ──────────────────────────────────────────────────────────
@@ -1937,6 +1971,50 @@ mod tests {
         }
     }
 
+    // ── if/else ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_if_else() {
+        let src = "fn test: () => {\n  if true { x = 1 } else { x = 2 }\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["test"];
+        assert_eq!(f.body.len(), 1);
+        match &f.body[0] {
+            Stmt::If(_, then_body, Some(else_body)) => {
+                assert_eq!(then_body.len(), 1);
+                assert_eq!(else_body.len(), 1);
+            }
+            _ => panic!("expected If with else branch"),
+        }
+    }
+
+    #[test]
+    fn test_parse_if_no_else() {
+        let src = "fn test: () => {\n  if true { x = 1 }\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["test"];
+        match &f.body[0] {
+            Stmt::If(_, then_body, None) => {
+                assert_eq!(then_body.len(), 1);
+            }
+            _ => panic!("expected If without else branch"),
+        }
+    }
+
+    #[test]
+    fn test_parse_if_else_multiple_stmts() {
+        let src = "fn test: () => {\n  if true { x = 1  y = 2 } else { x = 3  y = 4 }\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["test"];
+        match &f.body[0] {
+            Stmt::If(_, then_body, Some(else_body)) => {
+                assert_eq!(then_body.len(), 2);
+                assert_eq!(else_body.len(), 2);
+            }
+            _ => panic!("expected If with else branch and multiple stmts"),
+        }
+    }
+
     #[test]
     fn test_parse_try_missing_catch_emits_error() {
         // Grammar requires catch; missing it is a parse-level failure
@@ -2049,5 +2127,71 @@ mod tests {
         assert!(result.is_ok());
         let ast = result.unwrap();
         assert!(ast.components.contains_key("Card"));
+    }
+
+    // ── :obj block ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_obj_block() {
+        let src = ":obj User { id: string, name: string, email: string }";
+        let ast = parse_ok(src);
+        assert!(ast.objects.contains_key("User"));
+        let obj = &ast.objects["User"];
+        assert_eq!(obj.fields.len(), 3);
+        assert_eq!(obj.fields[0].name, "id");
+        assert_eq!(obj.fields[1].name, "name");
+        assert_eq!(obj.fields[2].name, "email");
+    }
+
+    #[test]
+    fn test_parse_obj_block_no_commas() {
+        let src = ":obj User { id: string name: string email: string }";
+        let ast = parse_ok(src);
+        assert!(ast.objects.contains_key("User"));
+        let obj = &ast.objects["User"];
+        assert_eq!(obj.fields.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_obj_block_optional() {
+        let src = ":obj Profile { bio: string? age: int? }";
+        let ast = parse_ok(src);
+        let obj = &ast.objects["Profile"];
+        assert_eq!(obj.fields.len(), 2);
+        assert!(obj.fields[0].optional, "first field 'bio' should be optional");
+        assert!(obj.fields[1].optional, "second field 'age' should be optional");
+    }
+
+    // ── Comments ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_single_line_comment() {
+        let src = ":vars { $primary: \"red\" }\n// this is a comment\nimport { text } \"frame-core\"";
+        let ast = parse_ok(src);
+        assert!(ast.vars.contains_key("primary"));
+        assert_eq!(ast.imports.len(), 1);
+    }
+
+    #[test]
+    fn test_multi_line_comment() {
+        let src = ":vars { $primary: \"red\" }\n/* block\n   comment */\nimport { text } \"frame-core\"";
+        let ast = parse_ok(src);
+        assert!(ast.vars.contains_key("primary"));
+        assert_eq!(ast.imports.len(), 1);
+    }
+
+    #[test]
+    fn test_comment_in_fn_body() {
+        let src = "fn greet: () => {\n    // say hello\n    return 1\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("greet"));
+    }
+
+    #[test]
+    fn test_trailing_comment_after_stmt() {
+        let src = "import { text } \"frame-core\" // importing text\npage: { name: \"Home\" route: \"/\" }";
+        let ast = parse_ok(src);
+        assert_eq!(ast.imports.len(), 1);
+        assert_eq!(ast.pages.len(), 1);
     }
 }

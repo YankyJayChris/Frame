@@ -94,7 +94,7 @@ pub fn run_preview(port: u16) {
     println!("  WebSocket server listening on ws://localhost:{port}");
 
     let senders_clone = Arc::clone(&client_senders);
-    let bcast_clone   = Arc::clone(&broadcast_msg);
+    let _bcast_clone  = Arc::clone(&broadcast_msg);
 
     // Accept connections in a background thread
     thread::spawn(move || {

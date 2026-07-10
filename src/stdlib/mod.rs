@@ -195,6 +195,9 @@ pub fn emit_stdlib_call(call: &str, platform: &str) -> String {
 pub fn resolve_string_interpolation(s: &str, vars: &HashMap<String, String>) -> String {
     let mut result = s.to_string();
     for (k, v) in vars {
+        // Try both $key and bare key patterns for backward compatibility
+        let dollar_key = format!("${}", k);
+        result = result.replace(dollar_key.as_str(), v.as_str());
         result = result.replace(k.as_str(), v.as_str());
     }
     result
@@ -481,8 +484,8 @@ mod tests {
     #[test]
     fn test_string_interpolation_replaces_vars() {
         let mut vars = std::collections::HashMap::new();
-        vars.insert("$name".to_string(), "World".to_string());
-        vars.insert("$color".to_string(), "#FF0000".to_string());
+        vars.insert("name".to_string(), "World".to_string());
+        vars.insert("color".to_string(), "#FF0000".to_string());
         assert_eq!(resolve_string_interpolation("Hello $name", &vars), "Hello World");
         assert_eq!(resolve_string_interpolation("Color: $color", &vars), "Color: #FF0000");
     }
@@ -495,8 +498,8 @@ mod tests {
     #[test]
     fn test_string_interpolation_multiple_vars() {
         let mut vars = std::collections::HashMap::new();
-        vars.insert("$first".to_string(), "John".to_string());
-        vars.insert("$last".to_string(), "Doe".to_string());
+        vars.insert("first".to_string(), "John".to_string());
+        vars.insert("last".to_string(), "Doe".to_string());
         assert_eq!(
             resolve_string_interpolation("$first $last", &vars),
             "John Doe"
@@ -533,7 +536,7 @@ mod tests {
     fn test_inject_resolves_string_vars_in_page() {
         use std::collections::HashMap;
         let mut ast = AST::default();
-        ast.vars.insert("$greeting".to_string(), "Hello".to_string());
+        ast.vars.insert("greeting".to_string(), "Hello".to_string());
 
         let mut props: HashMap<String, Expr> = HashMap::new();
         props.insert("label".to_string(), Expr::Literal(Value::Str("$greeting World".to_string())));

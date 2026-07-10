@@ -1,9 +1,0 @@
-// ============================================================================
-// DEPRECATED — this file is an early sketch and is no longer the canonical
-// Frame grammar.
-//
-// The canonical, complete PEG grammar is:
-//   src/parser/grammar.pest
-//
-// Do not add rules here. All grammar work should go into grammar.pest.
-// ============================================================================

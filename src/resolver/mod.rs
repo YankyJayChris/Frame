@@ -1,7 +1,7 @@
 //! Import resolver for the Frame framework.
 
 use crate::parser::{AST, FrameError, ErrorCategory};
-use crate::parser::ast::{ComponentNode, Import};
+use crate::parser::ast::ComponentNode;
 use std::collections::{HashMap, HashSet};
 
 pub mod types;
@@ -58,8 +58,18 @@ pub fn resolve(ast: AST) -> Result<AST, Vec<FrameError>> {
 fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
     for imp in &ast.imports {
         if imp.path == "frame-core" || imp.path.starts_with("frame-") {
-            // Check each named import against the built-in registry
+            // Check each named import — first in merged AST (from plugin files),
+            // then against the built-in registry
             for (name, _alias) in &imp.names {
+                let in_ast = ast.functions.contains_key(name)
+                    || ast.components.contains_key(name)
+                    || ast.objects.contains_key(name)
+                    || ast.stores.contains_key(name)
+                    || ast.pages.iter().any(|p| p.name == *name)
+                    || ast.consts.contains_key(name);
+                if in_ast {
+                    continue; // resolved from plugin file
+                }
                 let lower = name.to_lowercase();
                 let snake = pascal_to_snake(name);
                 if !BUILTIN_COMPONENTS.contains(&lower.as_str())
@@ -82,7 +92,13 @@ fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
         } else if imp.path.starts_with("./") || imp.path.starts_with("../") {
             // Relative path imports: validate named identifier exists in merged AST
             for (name, _alias) in &imp.names {
-                if !ast.components.contains_key(name) && !ast.functions.contains_key(name) {
+                if !ast.components.contains_key(name)
+                    && !ast.functions.contains_key(name)
+                    && !ast.objects.contains_key(name)
+                    && !ast.stores.contains_key(name)
+                    && !ast.pages.iter().any(|p| p.name == *name)
+                    && !ast.consts.contains_key(name)
+                {
                     errors.push(FrameError {
                         category: ErrorCategory::UnresolvedImportError,
                         file: "<project>".to_string(),
@@ -90,14 +106,32 @@ fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
                         column: 0,
                         message: format!(
                             "Unresolved import: '{}' not found in '{}'. \
-                             Make sure the file exports a component or function named '{}'.",
+                             Make sure the file exports a component, function, :obj, :store, page, or const named '{}'.",
                             name, imp.path, name
                         ),
                     });
                 }
             }
         }
-        // Plugin package imports (frame_maps, etc.) — validated in Task 19
+        // Plugin package imports (frame_maps, etc.) — validated with PluginRegistry
+        else {
+            // Plugin package import: check frame_modules/<name>/ exists
+            let plugin_folder = std::path::PathBuf::from("frame_modules").join(&imp.path);
+            // We check relative to CWD; if the caller passes a full AST with a
+            // project root annotation we'd use that. For now we use a best-effort check.
+            if !plugin_folder.exists() {
+                errors.push(FrameError {
+                    category: ErrorCategory::UnresolvedImportError,
+                    file: "<project>".to_string(),
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "Plugin '{}' is not installed. Run: frame plugin add {}",
+                        imp.path, imp.path
+                    ),
+                });
+            }
+        }
     }
 }
 
@@ -190,7 +224,6 @@ fn pascal_to_snake(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::parser::ast::*;
-    use std::collections::HashMap;
 
     fn empty_ast() -> AST {
         AST::default()
