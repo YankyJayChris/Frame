@@ -1,2 +1,0 @@
-// UserRepository — contract for user data access
-// Implement in src/data/repositories/

@@ -1,9 +1,10 @@
 use clap::Parser as ClapParser;
 use frame::cli::{
-    Cli, Commands, PluginCommands, scaffold_project, Architecture, run_check,
+    Cli, Commands, PluginCommands, IconCommands, scaffold_project, Architecture, run_check,
     run_build, deploy_android, deploy_ios, run_tests, run_preview,
     run_lint, LintConfig,
     plugin_add, plugin_remove, plugin_install, plugin_list, plugin_create, plugin_publish,
+    run_init_examples, run_icon_add,
 };
 use std::path::Path;
 
@@ -126,5 +127,23 @@ fn main() {
                 if !ok { std::process::exit(1); }
             }
         },
+
+        // ── frame icon ────────────────────────────────────────────────────────
+        Commands::Icon { action } => match action {
+            IconCommands::Add { path, name } => {
+                run_icon_add(&path, name.as_deref(), Path::new(".")).unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                });
+            }
+        },
+
+        // ── frame init-examples ───────────────────────────────────────────────
+        Commands::InitExamples => {
+            run_init_examples().unwrap_or_else(|e| {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            });
+        }
     }
 }

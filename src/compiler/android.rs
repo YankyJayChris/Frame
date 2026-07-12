@@ -131,6 +131,16 @@ pub fn gen_android_with_plugins(
         files.push(gen_obj_data_class(obj, pkg, &pkg_path));
     }
 
+    // :enum declarations → Kotlin enum classes (plan §1b)
+    for enum_def in ast.enums.values() {
+        files.push(gen_enum_kotlin(enum_def, pkg, &pkg_path));
+    }
+
+    // :type aliases → Kotlin typealias (plan §1c)
+    for type_alias in ast.type_aliases.values() {
+        files.push(gen_type_alias_kotlin(type_alias, pkg, &pkg_path));
+    }
+
     if uses_camera        { files.push(gen_camera_helper(pkg, &pkg_path)); }
     if uses_location_fine { files.push(gen_location_helper(pkg, &pkg_path)); }
     if uses_notification  { files.push(gen_notification_helper(pkg, &pkg_path)); }
@@ -332,6 +342,7 @@ android {{
 dependencies {{
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+    implementation 'androidx.lifecycle:lifecycle-process:2.6.2'
     implementation 'androidx.activity:activity-compose:1.8.0'
     implementation platform('androidx.compose:compose-bom:2023.10.01')
     implementation 'androidx.compose.ui:ui'
@@ -501,6 +512,7 @@ local.properties
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn gen_manifest(
     config: &AndroidConfig,
     uses_fetch: bool,
@@ -671,10 +683,55 @@ fn gen_main_application(pkg: &str) -> OutputFile {
             r#"package {pkg}
 
 import android.app.Application
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 
-class MainApplication : Application() {{
+/**
+ * MainApplication — app-level lifecycle hooks.
+ *
+ * Hook into the app lifecycle from .fr project.fr:
+ *
+ *   :app {{
+ *       on_launch:     appInit
+ *       on_foreground: appForeground
+ *       on_background: appBackground
+ *   }}
+ *
+ * The three optional callbacks below are called by the framework.
+ * Override [onLaunch], [onForeground], and [onBackground] in generated code.
+ */
+open class MainApplication : Application() {{
+
     override fun onCreate() {{
         super.onCreate()
+        // Restore any persisted store values on app launch
+        FrameStoreRegistry.restoreAll(this)
+        // Register process lifecycle observer for foreground/background events
+        ProcessLifecycleOwner.get().lifecycle.addObserver(AppLifecycleObserver())
+        onLaunch()
+    }}
+
+    /** Called once when the app process is created. */
+    open fun onLaunch() {{}}
+
+    /** Called when the app moves from background to foreground. */
+    open fun onForeground() {{}}
+
+    /** Called when the app moves from foreground to background. */
+    open fun onBackground() {{}}
+
+    inner class AppLifecycleObserver : DefaultLifecycleObserver {{
+        override fun onStart(owner: LifecycleOwner) {{ onForeground() }}
+        override fun onStop(owner: LifecycleOwner)  {{ onBackground() }}
+    }}
+}}
+
+/** Stub registry — generated stores register themselves here at runtime. */
+object FrameStoreRegistry {{
+    fun restoreAll(app: Application) {{
+        // Each generated :store ViewModel calls restore() on init.
+        // This object exists so MainApplication can trigger them in order.
     }}
 }}
 "#
@@ -704,6 +761,33 @@ fn gen_main_activity(ast: &AST, pkg: &str) -> OutputFile {
         .map(|p| gen_nav_route(p))
         .collect();
 
+    // App-level lifecycle overrides wired from :app { } block
+    let on_launch_override = ast.on_launch.as_ref()
+        .map(|f| format!("    override fun onLaunch() {{ {f}() }}\n"))
+        .unwrap_or_default();
+    let on_foreground_override = ast.on_foreground.as_ref()
+        .map(|f| format!("    override fun onForeground() {{ {f}() }}\n"))
+        .unwrap_or_default();
+    let on_background_override = ast.on_background.as_ref()
+        .map(|f| format!("    override fun onBackground() {{ {f}() }}\n"))
+        .unwrap_or_default();
+
+    let has_app_hooks = ast.on_launch.is_some()
+        || ast.on_foreground.is_some()
+        || ast.on_background.is_some();
+
+    // Only generate the subclass if the project uses any :app {} hooks
+    let app_class = if has_app_hooks {
+        format!(
+            r#"
+class FrameApp : MainApplication() {{
+{on_launch_override}{on_foreground_override}{on_background_override}}}
+"#
+        )
+    } else {
+        String::new()
+    };
+
     OutputFile {
         path: format!("app/src/main/java/{pkg_path}/MainActivity.kt"),
         content: format!(
@@ -715,7 +799,7 @@ import androidx.activity.compose.setContent
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.compose.composable
-{screen_imports}
+{screen_imports}{app_class}
 class MainActivity : ComponentActivity() {{
     override fun onCreate(savedInstanceState: Bundle?) {{
         super.onCreate(savedInstanceState)
@@ -736,20 +820,65 @@ class MainActivity : ComponentActivity() {{
 fn gen_page_screen(page: &Page, _ast: &AST, pkg: &str, pkg_path: &str) -> OutputFile {
     let state_vars = gen_state_vars(&page.state);
 
-    let before_enter = if let Some(func_name) = &page.before_enter {
-        format!(
-            "    LaunchedEffect(Unit) {{\n        {func_name}()\n    }}\n"
-        )
+    // Build typed parameter declarations from page.params (explicit) or route segments
+    let route_params: Vec<String> = if !page.params.is_empty() {
+        // Use explicit typed params block
+        page.params.iter().map(|(name, type_)| {
+            format!("{}: {}? = null", name, frtype_to_kotlin(type_))
+        }).collect()
+    } else {
+        // Fall back to route-segment params (all String?)
+        page.route.split('/').filter(|s| s.starts_with(':'))
+            .map(|s| format!("{}: String? = null", s.trim_start_matches(':')))
+            .collect()
+    };
+    let params_signature = if route_params.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", route_params.join(", "))
+    };
+
+    // before_enter → LaunchedEffect(Unit) fires when composable first enters composition
+    let before_enter = if let Some(expr) = &page.before_enter {
+        format!("    LaunchedEffect(Unit) {{\n        {}()\n    }}\n", emit_expr(expr))
     } else {
         String::new()
     };
 
-    let before_leave = if let Some(func_name) = &page.before_leave {
-        format!(
-            "    DisposableEffect(Unit) {{\n        onDispose {{ {func_name}() }}\n    }}\n"
-        )
+    // on_mount → second LaunchedEffect(Unit) fires after first composition is committed
+    let on_mount = if let Some(expr) = &page.on_mount {
+        format!("    LaunchedEffect(\"mount\") {{\n        {}()\n    }}\n", emit_expr(expr))
     } else {
         String::new()
+    };
+
+    // before_leave + on_unmount → DisposableEffect onDispose (both combined)
+    let dispose_body = {
+        let bl = page.before_leave.as_ref().map(|e| format!("        {}()\n", emit_expr(e))).unwrap_or_default();
+        let um = page.on_unmount.as_ref().map(|e| format!("        {}()\n", emit_expr(e))).unwrap_or_default();
+        bl + &um
+    };
+    let on_dispose = if !dispose_body.is_empty() {
+        format!("    DisposableEffect(Unit) {{\n        onDispose {{\n{dispose_body}        }}\n    }}\n")
+    } else {
+        String::new()
+    };
+
+    // on_foreground / on_background → Lifecycle observer via LocalLifecycleOwner
+    let (lifecycle_imports, lifecycle_observer) = if page.on_foreground.is_some() || page.on_background.is_some() {
+        let fg = page.on_foreground.as_ref()
+            .map(|e| format!("            Lifecycle.Event.ON_RESUME -> {}()\n", emit_expr(e)))
+            .unwrap_or_default();
+        let bg = page.on_background.as_ref()
+            .map(|e| format!("            Lifecycle.Event.ON_PAUSE  -> {}()\n", emit_expr(e)))
+            .unwrap_or_default();
+        let imports = "import androidx.lifecycle.Lifecycle\nimport androidx.lifecycle.LifecycleEventObserver\nimport androidx.compose.ui.platform.LocalLifecycleOwner\n";
+        let observer = format!(
+            "    val lifecycleOwner = LocalLifecycleOwner.current\n    DisposableEffect(lifecycleOwner) {{\n        val observer = LifecycleEventObserver {{ _, event ->\n            when (event) {{\n{fg}{bg}                else -> {{}}\n            }}\n        }}\n        lifecycleOwner.lifecycle.addObserver(observer)\n        onDispose {{ lifecycleOwner.lifecycle.removeObserver(observer) }}\n    }}\n"
+        );
+        (imports, observer)
+    } else {
+        ("", String::new())
     };
 
     let children_code: String = page
@@ -799,13 +928,14 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-{fetch_imports}{anim_import}
+{lifecycle_imports}{fetch_imports}{anim_import}
 @Composable
-fun {name}Screen(navController: NavController) {{
-{state_vars}{before_enter}{before_leave}{fetch_code}{children_code}
+fun {name}Screen(navController: NavController{params_signature}) {{
+{state_vars}{before_enter}{on_mount}{on_dispose}{lifecycle_observer}{fetch_code}{children_code}
 }}
 "#,
             name = page.name,
+            params_signature = params_signature,
         ),
     }
 }
@@ -960,21 +1090,23 @@ fn gen_nav_route(page: &Page) -> String {
     let raw_route = &page.route;
     let name = &page.name;
 
-    // Extract param names from `:paramName` patterns
-    let params: Vec<String> = raw_route
-        .split('/')
-        .filter(|seg| seg.starts_with(':'))
-        .map(|seg| seg.trim_start_matches(':').to_string())
-        .collect();
+    // Use explicit page.params if declared, otherwise extract from route segments
+    let params: Vec<(String, String)> = if !page.params.is_empty() {
+        page.params.iter().map(|(n, t)| (n.clone(), frtype_to_kotlin(t))).collect()
+    } else {
+        raw_route.split('/')
+            .filter(|seg| seg.starts_with(':'))
+            .map(|seg| (seg.trim_start_matches(':').to_string(), "String".to_string()))
+            .collect()
+    };
 
     if params.is_empty() {
-        // Simple route — no params
         return format!(
             "                composable(\"{raw_route}\") {{ {name}Screen(navController = navController) }}\n"
         );
     }
 
-    // Replace :param → {param}
+    // Replace :param → {param} in route string
     let kotlin_route = raw_route
         .split('/')
         .map(|seg| {
@@ -987,23 +1119,38 @@ fn gen_nav_route(page: &Page) -> String {
         .collect::<Vec<_>>()
         .join("/");
 
-    // navArgument list
-    let nav_args: String = params
-        .iter()
-        .map(|p| format!("navArgument(\"{p}\") {{ type = NavType.StringType }}"))
+    // navArgument list — use correct NavType per param type
+    let nav_args: String = params.iter()
+        .map(|(p, kt)| {
+            let nav_type = match kt.as_str() {
+                "Int"    => "NavType.IntType",
+                "Float"  => "NavType.FloatType",
+                "Long"   => "NavType.LongType",
+                "Boolean"=> "NavType.BoolType",
+                _        => "NavType.StringType",
+            };
+            format!("navArgument(\"{p}\") {{ type = {nav_type} }}")
+        })
         .collect::<Vec<_>>()
         .join(", ");
 
-    // backStackEntry extractions
-    let extractions: String = params
-        .iter()
-        .map(|p| format!("                    val {p} = backStackEntry.arguments?.getString(\"{p}\")\n"))
+    // backStackEntry extractions — typed
+    let extractions: String = params.iter()
+        .map(|(p, kt)| {
+            let getter = match kt.as_str() {
+                "Int"     => format!("backStackEntry.arguments?.getInt(\"{p}\")"),
+                "Float"   => format!("backStackEntry.arguments?.getFloat(\"{p}\")"),
+                "Long"    => format!("backStackEntry.arguments?.getLong(\"{p}\")"),
+                "Boolean" => format!("backStackEntry.arguments?.getBoolean(\"{p}\")"),
+                _         => format!("backStackEntry.arguments?.getString(\"{p}\")"),
+            };
+            format!("                    val {p} = {getter}\n")
+        })
         .collect();
 
-    // extra params for Screen composable
-    let extra_params: String = params
-        .iter()
-        .map(|p| format!(", {p} = {p}"))
+    // pass params to Screen composable
+    let extra_params: String = params.iter()
+        .map(|(p, _)| format!(", {p} = {p}"))
         .collect();
 
     format!(
@@ -1111,7 +1258,13 @@ fn gen_store_viewmodel(name: &str, store: &StoreSlice, pkg: &str, pkg_path: &str
             let params_str: String = func
                 .params
                 .iter()
-                .map(|(pname, ptype)| format!("{pname}: {}", frtype_to_kotlin(ptype)))
+                .map(|(pname, ptype, default)| {
+                    let kt = frtype_to_kotlin(ptype);
+                    match default {
+                        Some(d) => format!("{pname}: {kt} = {}", emit_expr(d)),
+                        None => format!("{pname}: {kt}"),
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -1355,6 +1508,35 @@ pub fn emit_composable(node: &ComponentNode, indent: usize) -> String {
         .collect::<Vec<_>>()
         .join("\n");
 
+    // ── Component-level lifecycle hooks ────────────────────────────────────────
+    // on_mount  → LaunchedEffect(Unit)  — fires once after first composition
+    let mount_code = if let Some(handler) = &node.events.on_mount {
+        format!("{pad}LaunchedEffect(Unit) {{ {}() }}\n", emit_expr(handler))
+    } else {
+        String::new()
+    };
+
+    // on_update → LaunchedEffect(key)  — fires whenever `watch` dependency changes
+    //             falls back to LaunchedEffect(Unit) if no watch key provided
+    let update_code = if let Some(handler) = &node.events.on_update {
+        let key = node.events.watch.as_ref()
+            .map(|w| emit_expr(w))
+            .unwrap_or_else(|| "Unit".to_string());
+        format!("{pad}LaunchedEffect({key}) {{ {}() }}\n", emit_expr(handler))
+    } else {
+        String::new()
+    };
+
+    // on_unmount → DisposableEffect onDispose  — fires when node leaves composition
+    let unmount_code = if let Some(handler) = &node.events.on_unmount {
+        format!(
+            "{pad}DisposableEffect(Unit) {{\n{inner_pad}onDispose {{ {}() }}\n{pad}}}\n",
+            emit_expr(handler)
+        )
+    } else {
+        String::new()
+    };
+
     let body = match node.kind.as_str() {
         "text" => emit_text_node(node, &pad),
         "button" => emit_button_node(node, &pad, &inner_pad),
@@ -1368,7 +1550,7 @@ pub fn emit_composable(node: &ComponentNode, indent: usize) -> String {
         "input" => emit_input_node(node, &pad),
         "dropdown" => emit_dropdown_node(node, &pad, &inner_pad, indent),
         "form" => emit_container_node(node, "Column", &pad, &inner_pad, indent),
-        "app_bar" => emit_app_bar_node(node, &pad),
+        "app_bar" => emit_app_bar_node(node, &pad, &inner_pad, indent),
         "bottom_navigation_bar" => emit_bottom_nav_node(node, &pad, &inner_pad, indent),
         "scaffold" => emit_scaffold_node(node, &pad, &inner_pad, indent),
         "card" => emit_card_node(node, &pad, &inner_pad, indent),
@@ -1386,6 +1568,8 @@ pub fn emit_composable(node: &ComponentNode, indent: usize) -> String {
         // ── Navigation ──────────────────────────────────────────────────────
         "tab_bar"         => emit_tab_bar_node(node, &pad, &inner_pad, indent),
         "tab"             => emit_tab_node(node, &pad),
+        "sidebar"         => emit_sidebar_node(node, &pad, &inner_pad, indent),
+        "floating_action_button" => emit_fab_node(node, &pad, &inner_pad, indent),
         "bottom_sheet"    => emit_bottom_sheet_node(node, &pad, &inner_pad, indent),
         // ── Inputs ──────────────────────────────────────────────────────────
         "switch"          => emit_switch_node(node, &pad),
@@ -1417,6 +1601,9 @@ pub fn emit_composable(node: &ComponentNode, indent: usize) -> String {
         "map_view"        => emit_map_view_node(node, &pad),
         "camera_view"     => emit_camera_view_node(node, &pad),
         "qr_scanner"      => emit_qr_scanner_node(node, &pad),
+        // ── Misc ──────────────────────────────────────────────────────────────
+        "item"            => emit_container_node(node, "Column", &pad, &inner_pad, indent),
+        "plugin"          => emit_plugin_node(node, &pad),
         // ── Gestures ────────────────────────────────────────────────────────
         "swipeable"       => emit_swipeable_node(node, &pad, &inner_pad, indent),
         "draggable"       => emit_draggable_node(node, &pad, &inner_pad, indent),
@@ -1434,7 +1621,7 @@ pub fn emit_composable(node: &ComponentNode, indent: usize) -> String {
         }
     };
 
-    format!("{open_if}{anim_code}{body}{close_if}")
+    format!("{open_if}{anim_code}{mount_code}{update_code}{unmount_code}{body}{close_if}")
 }
 
 fn emit_modifier(styles: &Styles) -> String {
@@ -1726,7 +1913,7 @@ fn emit_list_node(node: &ComponentNode, pad: &str, inner_pad: &str, indent: usiz
         .build
         .as_ref()
         .and_then(|b| b.params.first())
-        .map(|(name, _)| name.clone())
+        .map(|(name, _, _)| name.clone())
         .unwrap_or_else(|| "item".to_string());
 
     format!(
@@ -1764,13 +1951,30 @@ fn emit_dropdown_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent:
     format!("{pad}DropdownMenu(expanded = true, onDismissRequest = {{}}) {{\n{items}{pad}}}\n")
 }
 
-fn emit_app_bar_node(node: &ComponentNode, pad: &str) -> String {
+fn emit_app_bar_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent: usize) -> String {
     let title = node
         .props
         .get("title")
         .map(|e| emit_expr(e))
         .unwrap_or_else(|| "\"\"".to_string());
-    format!("{pad}TopAppBar(title = {{ Text(text = {title}) }})\n")
+    let leading = node.props.get("leading")
+        .map(|e| emit_expr(e))
+        .unwrap_or_default();
+    let leading_block = if leading.is_empty() || leading == "\"\"" {
+        String::new()
+    } else {
+        format!("navigationIcon = {{ IconButton(onClick = {{}}) {{ Icon(painter = painterResource(id = {leading}), contentDescription = \"\") }} }}, ")
+    };
+    let actions: String = node.children.iter()
+        .map(|c| emit_composable(c, indent + 1))
+        .collect();
+    let actions_block = if actions.is_empty() {
+        String::new()
+    } else {
+        let inner_pad2 = "    ".repeat(indent + 2);
+        format!("actions = {{ Row {{ \n{actions}{inner_pad2}}} }}")
+    };
+    format!("{pad}TopAppBar(title = {{ Text(text = {title}) }}, {leading_block}{actions_block})\n")
 }
 
 fn emit_bottom_nav_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent: usize) -> String {
@@ -1815,8 +2019,14 @@ fn emit_scaffold_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent:
     };
 
     let inner_pad = "    ".repeat(indent + 1);
+    let use_safe = node.styles.safe_area.unwrap_or(true);
+    let content_mod = if use_safe {
+        "Modifier.padding(innerPadding)".to_string()
+    } else {
+        "Modifier.fillMaxSize()".to_string()
+    };
     format!(
-        "{pad}Scaffold({top_bar_arg}{bottom_bar_arg}) {{ innerPadding ->\n{inner_pad}Column(modifier = Modifier.padding(innerPadding)) {{\n{content}{inner_pad}}}\n{pad}}}\n"
+        "{pad}Scaffold({top_bar_arg}{bottom_bar_arg}) {{ innerPadding ->\n{inner_pad}Column(modifier = {content_mod}) {{\n{content}{inner_pad}}}\n{pad}}}\n"
     )
 }
 
@@ -1829,6 +2039,57 @@ fn emit_card_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent: usi
         .map(|c| emit_composable(c, indent + 1))
         .collect();
     format!("{pad}Card({args}) {{\n{children}{pad}}}\n")
+}
+
+fn emit_sidebar_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent: usize) -> String {
+    let width = node.props.get("width")
+        .and_then(|e| if let Expr::Literal(Value::Str(s)) = e { Some(s.clone()) } else { None })
+        .unwrap_or_else(|| "260".to_string());
+    let width_dp = parse_dp(&width).map(|d| d.to_string()).unwrap_or_else(|| width.clone());
+    let bg = node.styles.background.as_deref().map(|c| format!(".background({})", color_to_compose(c))).unwrap_or_default();
+    let children: String = node.children.iter()
+        .map(|c| emit_composable(c, indent + 1))
+        .collect();
+    format!("{pad}Column(modifier = Modifier.width({width_dp}.dp).fillMaxHeight(){bg}) {{\n{children}{pad}}}\n")
+}
+
+fn emit_fab_node(node: &ComponentNode, pad: &str, _inner_pad: &str, indent: usize) -> String {
+    let content = node.props.get("content")
+        .map(|e| emit_expr(e)).unwrap_or_else(|| "\"\"".to_string());
+    let icon = node.props.get("icon")
+        .map(|e| emit_expr(e)).unwrap_or_default();
+    let on_click = node.events.on_click.as_ref()
+        .map(|e| emit_expr(e)).unwrap_or_default();
+    let click_handler = if on_click.is_empty() {
+        String::new()
+    } else {
+        format!("onClick = {{ {on_click} }}, ")
+    };
+    // If children exist, render them inside the FAB
+    if !node.children.is_empty() {
+        let children: String = node.children.iter()
+            .map(|c| emit_composable(c, indent + 1))
+            .collect();
+        format!("{pad}FloatingActionButton({click_handler}containerColor = MaterialTheme.colorScheme.primaryContainer) {{\n{children}{pad}}}\n")
+    } else {
+        let icon_block = if icon.is_empty() || icon == "\"\"" {
+            String::new()
+        } else {
+            format!(" {{ Icon(painter = painterResource(id = {icon}), contentDescription = {content}) }}")
+        };
+        let content_block = if content.is_empty() || content == "\"\"" {
+            if icon_block.is_empty() {
+                " { Icon(painter = painterResource(id = \"add\"), contentDescription = \"Add\") }".to_string()
+            } else {
+                icon_block.clone()
+            }
+        } else if icon_block.is_empty() {
+            format!(" {{ Text({content}) }}")
+        } else {
+            icon_block
+        };
+        format!("{pad}FloatingActionButton({click_handler}containerColor = MaterialTheme.colorScheme.primaryContainer){content_block}\n")
+    }
 }
 
 fn emit_spacer_node(node: &ComponentNode, pad: &str) -> String {
@@ -1892,7 +2153,7 @@ fn emit_grid_node(node: &ComponentNode, pad: &str, inner_pad: &str, indent: usiz
         .build
         .as_ref()
         .and_then(|b| b.params.first())
-        .map(|(n, _)| n.clone())
+        .map(|(n, _, _)| n.clone())
         .unwrap_or_else(|| "item".to_string());
 
     format!(
@@ -1909,8 +2170,8 @@ fn emit_toast_node(node: &ComponentNode, pad: &str) -> String {
         .map(|e| emit_expr(e)).unwrap_or_else(|| "\"\"".to_string());
     let duration = node.props.get("duration")
         .map(|e| emit_expr(e)).unwrap_or_else(|| "Toast.LENGTH_SHORT".to_string());
-    // Compose doesn't have native Toast in LazyComposables; emit a LaunchedEffect Snackbar trigger
-    format!("{pad}// toast: {message}\n{pad}LaunchedEffect(Unit) {{ /* show Snackbar: {message} duration={duration} */ }}\n")
+    format!("{pad}val context = LocalContext.current\n\
+             {pad}LaunchedEffect(Unit) {{ Toast.makeText(context, {message}, {duration}).show() }}\n")
 }
 
 fn emit_tooltip_node(node: &ComponentNode, pad: &str, inner_pad: &str, indent: usize) -> String {
@@ -2055,8 +2316,13 @@ fn emit_time_picker_node(_node: &ComponentNode, pad: &str) -> String {
 }
 
 fn emit_color_picker_node(node: &ComponentNode, pad: &str) -> String {
+    let value = node.props.get("value").map(|e| emit_expr(e)).unwrap_or_else(|| "Color.Blue".to_string());
     let on_change = node.events.on_change.as_ref().map(|e| emit_expr(e)).unwrap_or_else(|| "{}".to_string());
-    format!("{pad}// color_picker: no standard Compose component — use a custom colour picker library\n{pad}// on_change: {on_change}\n")
+    format!("{pad}var selectedColor by remember {{ mutableStateOf({value}) }}\n\
+             {pad}Button(onClick = {{ /* open color picker dialog */ {on_change}(selectedColor) }}) {{\n\
+             {pad}    Text(\"Pick Color\")\n\
+             {pad}    Box(modifier = Modifier.size(24.dp).background(selectedColor))\n\
+             {pad}}}\n")
 }
 
 fn emit_rating_node(node: &ComponentNode, pad: &str) -> String {
@@ -2253,6 +2519,17 @@ fn emit_long_press_node(node: &ComponentNode, pad: &str, _inner_pad: &str, inden
     format!("{pad}Box(modifier = Modifier.combinedClickable(onLongClick = {{ {on_long_press} }}, onClick = {{}})) {{\n{children}{pad}}}\n")
 }
 
+fn emit_plugin_node(node: &ComponentNode, pad: &str) -> String {
+    let name = node.props.get("name").map(|e| emit_expr(e)).unwrap_or_else(|| "\"\"".to_string());
+    let method = node.props.get("method").map(|e| emit_expr(e)).unwrap_or_else(|| "\"\"".to_string());
+    let args: Vec<String> = node.props.iter()
+        .filter(|(k, _)| *k != "name" && *k != "method")
+        .map(|(k, v)| format!("{} = {}", k, emit_expr(v)))
+        .collect();
+    let args_str = if args.is_empty() { String::new() } else { format!(", {}", args.join(", ")) };
+    format!("{pad}PluginBridge.call(name = {name}, method = {method}{args_str})\n")
+}
+
 // ─── Responsive / overflow helpers ───────────────────────────────────────────
 
 /// Emit BoxWithConstraints conditional style overrides for @breakpoint rules.
@@ -2330,6 +2607,10 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
     let url = emit_expr(&fe.url);
     let method = fe.method.to_lowercase();
 
+    let headers_code: String = fe.headers.iter()
+        .map(|(k, v)| format!("{i3}.addHeader(\"{}\", {})\n", k, emit_expr(v)))
+        .collect();
+
     let then_code: String = fe
         .then_branch
         .iter()
@@ -2348,7 +2629,7 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
 {i2}val request = Request.Builder()
 {i3}.url({url})
 {i3}.{method}()
-{i3}.build()
+{headers_code}{i3}.build()
 {i2}try {{
 {i3}val response = client.newCall(request).execute()
 {i3}val body = response.body?.string()
@@ -2448,9 +2729,53 @@ pub fn emit_expr(expr: &Expr) -> String {
         Expr::Call(c) if c.func == "navigate_back" => {
             "navController.popBackStack()".to_string()
         }
+        // ── New typed navigate variants ────────────────────────────────────
+        Expr::Navigate(route, opts) => {
+            let r = emit_expr(route);
+            let mut nav_opts: Vec<String> = Vec::new();
+            if opts.replace || opts.clear_stack {
+                nav_opts.push(format!(
+                    "navOptions {{ popUpTo(navController.graph.startDestinationId) {{ inclusive = {} }} launchSingleTop = true }}",
+                    opts.clear_stack
+                ));
+            } else if opts.single_top {
+                nav_opts.push("navOptions { launchSingleTop = true }".to_string());
+            }
+            if nav_opts.is_empty() {
+                format!("navController.navigate({r})")
+            } else {
+                format!("navController.navigate({r}, {})", nav_opts.join(", "))
+            }
+        }
+        Expr::NavigateReplace(route) => {
+            let r = emit_expr(route);
+            format!("navController.navigate({r}, navOptions {{ popUpTo(navController.currentBackStackEntry?.destination?.id ?: 0) {{ inclusive = true }} launchSingleTop = true }})")
+        }
+        Expr::NavigateBack => "navController.popBackStack()".to_string(),
+        Expr::NavigateBackTo(route) => {
+            let r = emit_expr(route);
+            format!("navController.popBackStack({r}, inclusive = false)")
+        }
+        Expr::NavigateModal(route) => {
+            // Android: navigate to route, the route should use dialog composable
+            let r = emit_expr(route);
+            format!("navController.navigate({r})")
+        }
+        Expr::NavigateDismiss => "navController.popBackStack()".to_string(),
         Expr::Call(c) => {
-            let args: String = c.args.iter().map(|a| emit_expr(a)).collect::<Vec<_>>().join(", ");
-            format!("{}({args})", c.func)
+            let mut parts: Vec<String> = c.args.iter().map(|a| emit_expr(a)).collect();
+            for (k, v) in &c.named_args {
+                parts.push(format!("{} = {}", k, emit_expr(v)));
+            }
+            if c.func.contains('.') {
+                if let Some(translated) = crate::stdlib::translate_stdlib_call(&c.func, &parts, "android") {
+                    translated
+                } else {
+                    format!("{}({})", c.func, parts.join(", "))
+                }
+            } else {
+                format!("{}({})", c.func, parts.join(", "))
+            }
         }
         Expr::NullCoalesce(a, b) => format!("{} ?: {}", emit_expr(a), emit_expr(b)),
         Expr::SafeNav(parts) => parts.join("?."),
@@ -2463,6 +2788,15 @@ pub fn emit_expr(expr: &Expr) -> String {
             let p = params.join(", ");
             let stmts: String = body.iter().map(|s| emit_stmt(s, 1)).collect();
             format!("{{ {p} -> {stmts} }}")
+        }
+        Expr::Interpolated(segments) => {
+            // Kotlin string template: "Hello ${name}!"
+            use crate::parser::ast::InterpolatedSegment;
+            let inner: String = segments.iter().map(|seg| match seg {
+                InterpolatedSegment::Literal(s) => s.clone(),
+                InterpolatedSegment::Expr(e)    => format!("${{{}}}", emit_expr(e)),
+            }).collect();
+            format!("\"{}\"", inner)
         }
     }
 }
@@ -2500,21 +2834,24 @@ pub fn emit_stmt(stmt: &Stmt, indent: usize) -> String {
     let pad = "    ".repeat(indent);
     match stmt {
         Stmt::VarDecl(vd) => {
-            let kt_type = frtype_to_kotlin(&vd.type_);
+            let kt_type = vd.type_.as_ref().map_or("Any?".to_string(), |t| frtype_to_kotlin(t));
+            let keyword = if vd.mutable { "var" } else { "val" };
             match &vd.initializer {
-                Some(init) => format!("{pad}var {}: {kt_type} = {}\n", vd.name, emit_expr(init)),
-                None => format!("{pad}var {}: {kt_type} = {}\n", vd.name, default_for_type(&vd.type_)),
+                Some(init) => format!("{pad}{keyword} {}: {kt_type} = {}\n", vd.name, emit_expr(init)),
+                None => format!("{pad}{keyword} {}: {kt_type} = {}\n", vd.name, vd.type_.as_ref().map_or("null".into(), default_for_type)),
             }
         }
         Stmt::Assign(name, expr) => format!("{pad}{name} = {}\n", emit_expr(expr)),
         Stmt::Return(expr) => format!("{pad}return {}\n", emit_expr(expr)),
         Stmt::Call(c) => {
-            let args: String = c.args.iter().map(|a| emit_expr(a)).collect::<Vec<_>>().join(", ");
-            format!("{pad}{}({args})\n", c.func)
+            let mut parts: Vec<String> = c.args.iter().map(|a| emit_expr(a)).collect();
+            for (k, v) in &c.named_args { parts.push(format!("{k} = {}", emit_expr(v))); }
+            format!("{pad}{}({})\n", c.func, parts.join(", "))
         }
         Stmt::Wait(c) => {
-            let args: String = c.args.iter().map(|a| emit_expr(a)).collect::<Vec<_>>().join(", ");
-            format!("{pad}{}({args})\n", c.func)
+            let mut parts: Vec<String> = c.args.iter().map(|a| emit_expr(a)).collect();
+            for (k, v) in &c.named_args { parts.push(format!("{k} = {}", emit_expr(v))); }
+            format!("{pad}{}({})\n", c.func, parts.join(", "))
         }
         Stmt::WaitFetch(fe) => emit_fetch_block(fe, indent),
         Stmt::If(cond, then, else_) => {
@@ -2615,15 +2952,16 @@ fn color_to_compose(color: &str) -> String {
 }
 
 /// Convert a Frame type to a Kotlin type name.
-fn frtype_to_kotlin(t: &FRType) -> &'static str {
+fn frtype_to_kotlin(t: &FRType) -> String {
     match t {
-        FRType::String_ => "String",
-        FRType::Int => "Int",
-        FRType::Float => "Float",
-        FRType::Bool => "Boolean",
-        FRType::Object => "Any",
-        FRType::List => "List<Any>",
-        FRType::Nullable(_) => "Any?",
+        FRType::String_ => "String".into(),
+        FRType::Int => "Int".into(),
+        FRType::Float => "Float".into(),
+        FRType::Bool => "Boolean".into(),
+        FRType::Object => "Any".into(),
+        FRType::List => "List<Any>".into(),
+        FRType::Nullable(_) => "Any?".into(),
+        FRType::Custom(name) => name.clone(),
     }
 }
 
@@ -2637,6 +2975,7 @@ fn default_for_type(t: &FRType) -> String {
         FRType::List => "emptyList<Any>()".to_string(),
         FRType::Object => "Any()".to_string(),
         FRType::Nullable(_) => "null".to_string(),
+        FRType::Custom(_) => "null".to_string(),
     }
 }
 
@@ -2689,6 +3028,71 @@ data class {name}(
             pkg   = pkg,
             name  = obj.name,
             fields = fields_str,
+        ),
+    }
+}
+
+// ─── :enum → Kotlin enum class ────────────────────────────────────────────────
+
+/// Generate a Kotlin `enum class` for a `:enum` declaration.
+///
+/// Variants with values → `VARIANT("value")` with a `val value: String` constructor.
+/// Variants without values → plain `VARIANT` entries.
+///
+/// Compiles per plan §1b.
+pub fn gen_enum_kotlin(enum_def: &EnumDef, pkg: &str, pkg_path: &str) -> OutputFile {
+    let has_values = enum_def.variants.iter().any(|v| v.value.is_some());
+    let constructor = if has_values { "(val value: String)" } else { "" };
+
+    let variants: Vec<String> = enum_def.variants.iter().enumerate().map(|(i, v)| {
+        let comma = if i + 1 < enum_def.variants.len() { "," } else { "" };
+        match &v.value {
+            Some(val) => format!("    {}(\"{}\")", v.name, val) + comma,
+            None      => format!("    {}", v.name) + comma,
+        }
+    }).collect();
+
+    OutputFile {
+        path: format!("app/src/main/java/{pkg_path}/{}.kt", enum_def.name),
+        content: format!(
+"package {pkg}\n\
+\n\
+/**\n \
+ * {} — generated from :enum declaration in Frame source.\n \
+ * Do not edit manually; re-run `frame build` to regenerate.\n \
+ */\n\
+enum class {}{} {{\n\
+{}\n\
+}}\n",
+            enum_def.name,
+            enum_def.name,
+            constructor,
+            variants.join("\n"),
+        ),
+    }
+}
+
+// ─── :type → Kotlin typealias ────────────────────────────────────────────────
+
+/// Generate a Kotlin `typealias` for a `:type` alias declaration (plan §1c).
+pub fn gen_type_alias_kotlin(alias: &TypeAlias, pkg: &str, pkg_path: &str) -> OutputFile {
+    let target = match &alias.target {
+        FRType::String_      => "String",
+        FRType::Int          => "Int",
+        FRType::Float        => "Float",
+        FRType::Bool         => "Boolean",
+        FRType::Object       => "Any",
+        FRType::List         => "List<Any>",
+        FRType::Nullable(_)  => "Any?",
+        FRType::Custom(name) => name,
+    };
+    OutputFile {
+        path: format!("app/src/main/java/{pkg_path}/{}TypeAlias.kt", alias.alias),
+        content: format!(
+"package {pkg}\n\n\
+/** {} — generated from :type declaration. Do not edit manually. */\n\
+typealias {} = {}\n",
+            alias.alias, alias.alias, target,
         ),
     }
 }
@@ -2933,6 +3337,7 @@ mod tests {
         let expr = Expr::Call(CallExpr {
             func: "navigate".to_string(),
             args: vec![Expr::Literal(Value::Str("/home".to_string()))],
+            named_args: vec![],
         });
         let result = emit_expr(&expr);
         assert_eq!(result, "navController.navigate(\"/home\")");
@@ -2943,6 +3348,7 @@ mod tests {
         let expr = Expr::Call(CallExpr {
             func: "navigate_back".to_string(),
             args: vec![],
+            named_args: vec![],
         });
         let result = emit_expr(&expr);
         assert_eq!(result, "navController.popBackStack()");
@@ -2951,7 +3357,7 @@ mod tests {
     #[test]
     fn test_camera_helper_generated_when_camera_used() {
         let mut ast = AST::default();
-        let mut func = Function {
+        let func = Function {
             name: "capture".to_string(),
             is_async: false,
             params: vec![],
@@ -2959,6 +3365,7 @@ mod tests {
             body: vec![Stmt::Call(CallExpr {
                 func: "camera:capture".to_string(),
                 args: vec![],
+                named_args: vec![],
             })],
         };
         // Put the call inside a component event handler so ast_uses_call finds it
@@ -2966,6 +3373,7 @@ mod tests {
         node.events.on_click = Some(Expr::Call(CallExpr {
             func: "camera:capture".to_string(),
             args: vec![],
+            named_args: vec![],
         }));
         let mut page = Page {
             name: "CamPage".to_string(),
@@ -2998,6 +3406,7 @@ mod tests {
             body: vec![Stmt::Call(CallExpr {
                 func: "location:get".to_string(),
                 args: vec![],
+                named_args: vec![],
             })],
         };
         ast.functions.insert("getloc".to_string(), func);
@@ -3023,6 +3432,7 @@ mod tests {
             body: vec![Stmt::Call(CallExpr {
                 func: "notification:send".to_string(),
                 args: vec![],
+                named_args: vec![],
             })],
         };
         ast.functions.insert("notify".to_string(), func);

@@ -1,65 +1,100 @@
-# frame-syntax README
+# Frame Syntax
 
-This is the README for your extension "frame-syntax". After writing up a brief description, we recommend including the following sections.
+Syntax highlighting, code snippets, and language support for Frame `.fr` files.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- **Syntax highlighting** for all built-in components (text, button, column, row, scaffold, app_bar, sidebar, floating_action_button, and 50+ more)
+- **Syntax highlighting** for Frame keywords (page, component, fn, :store, :obj, :enum, :vars, :breakpoints, etc.)
+- **Syntax highlighting** for style properties, events, string interpolation, and types
+- **Code snippets** for all built-in components, declarations, control flow, and more
+- **Language configuration** with auto-closing pairs, bracket matching, and indentation rules
 
-For example if there is an image subfolder under your extension project workspace:
+## Snippets
 
-\!\[feature X\]\(images/feature-x.png\)
+### Components
+| Prefix | Description |
+|--------|-------------|
+| `page` | Create a page with route and children |
+| `scaffold` | Add a scaffold layout |
+| `app_bar` | Add an app bar with title and actions |
+| `sidebar` | Add a sidebar navigation panel |
+| `fab` / `floating_action_button` | Add a floating action button |
+| `column` | Add a column layout |
+| `row` | Add a row layout |
+| `text` | Add a text element |
+| `button` | Add a button |
+| `image` | Add an image |
+| `icon` | Add an icon |
+| `card` | Add a card component |
+| `input` | Add a text input |
+| `form` | Add a form |
+| `list` | Add a list with dynamic items |
+| `scroll_view` | Add a scrollable container |
+| `divider` | Add a horizontal divider |
+| `spacer` | Add a spacer |
+| `stack` | Add a stack (layered positioning) |
+| `grid` | Add a grid layout |
+| `modal` | Add a modal dialog |
+| `progress_bar` | Add a linear progress bar |
+| `progress_circle` | Add a circular progress indicator |
+| `switch` | Add a toggle switch |
+| `slider` | Add a slider control |
+| `stepper` | Add a stepper |
+| `badge` | Add a notification badge |
+| `chip` | Add a compact chip |
+| `tag` | Add a static tag pill |
+| `avatar` | Add a circular avatar |
+| `skeleton` | Add a loading skeleton |
+| `search_bar` | Add a search bar |
+| `tab_bar` | Add a tab bar |
+| `rating` | Add a star rating |
+| `toast` | Add a toast notification |
+| `web_view` | Add an embedded web view |
+| `map_view` | Add a map view |
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+### Declarations
+| Prefix | Description |
+|--------|-------------|
+| `component` | Create a reusable component |
+| `:store` | Create a state management store |
+| `:obj` | Define an object type |
+| `:enum` | Define an enum type |
+| `fn` | Define a function |
+| `:var` | Declare a local variable |
+| `:vars` | Define design tokens |
+| `:breakpoints` | Define responsive breakpoints |
+| `:i18n` | Add internationalization strings |
+| `:typography` | Define typography styles |
+| `:validation` | Define validation rules |
 
-## Requirements
+### Statements
+| Prefix | Description |
+|--------|-------------|
+| `if` | Add an if/else statement |
+| `for` | Add a for loop |
+| `try` | Add a try/catch block |
+| `switch` | Add a switch statement |
+| `fetch` | Add an HTTP fetch call |
+| `navigate` | Navigate to another page |
+| `import` | Import from a module |
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+## Installation
 
-## Extension Settings
+1. Open VS Code
+2. Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux)
+3. Run `Extensions: Install from VSIX...`
+4. Select the `.vsix` file
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+Or copy the `frame-syntax` folder to `~/.vscode/extensions/`.
 
-For example:
+## Development
 
-This extension contributes the following settings:
+To build the extension:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+```bash
+npm install -g vsce
+vsce package
+```
 
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+This generates a `.vsix` file you can install in VS Code.

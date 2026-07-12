@@ -8,6 +8,7 @@ use crate::compiler::{gen_android_with_plugins, gen_ios_with_plugins};
 use crate::compiler::android::AndroidConfig;
 use crate::compiler::ios::IosConfig;
 use crate::plugins::PluginRegistry;
+use crate::cli::font::{FontRegistry, copy_fonts_for_deploy};
 
 use std::fs;
 use std::path::Path;
@@ -115,6 +116,14 @@ pub fn deploy_android(project_dir: &Path) -> bool {
         eprintln!("error: {} missing asset(s):", missing.len());
         for m in &missing { eprintln!("  {m}"); }
         return false;
+    }
+
+    // Copy fonts (Phase 4a)
+    let font_registry = FontRegistry::scan(project_dir);
+    if !font_registry.fonts.is_empty() {
+        if let Err(e) = copy_fonts_for_deploy(&font_registry, project_dir, "android") {
+            eprintln!("warning: font copy failed: {e}");
+        }
     }
 
     println!("✓ Android project written to build/android/");
@@ -246,6 +255,14 @@ pub fn deploy_ios(project_dir: &Path) -> bool {
     let assets_dst = build_dir.join("Assets.xcassets/Resources");
     if assets_src.exists() {
         copy_assets_ios(&assets_src, &assets_dst);
+    }
+
+    // Copy fonts (Phase 4a)
+    let font_registry = FontRegistry::scan(project_dir);
+    if !font_registry.fonts.is_empty() {
+        if let Err(e) = copy_fonts_for_deploy(&font_registry, project_dir, "ios") {
+            eprintln!("warning: font copy failed: {e}");
+        }
     }
 
     // Detect missing assets

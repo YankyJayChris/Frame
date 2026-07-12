@@ -1,0 +1,5 @@
+[alias]
+# Regenerate both example projects
+examples = "run -- init-examples"
+# Build and regenerate examples in one step
+fbt = "run -- init-examples"

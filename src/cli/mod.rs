@@ -21,8 +21,10 @@ pub mod test_runner;
 pub mod preview;
 pub mod lint;
 pub mod plugin;
+pub mod icon;
+pub mod font;
 
-pub use start::{scaffold_project, scaffold_project_in, Architecture};
+pub use start::{scaffold_project, scaffold_project_in, Architecture, run_init_examples};
 pub use check::run_check;
 pub use build::run_build;
 pub use deploy::{deploy_android, deploy_ios};
@@ -30,6 +32,7 @@ pub use test_runner::run_tests;
 pub use preview::run_preview;
 pub use lint::{run_lint, LintConfig};
 pub use plugin::{plugin_add, plugin_remove, plugin_install, plugin_list, plugin_create, plugin_publish};
+pub use icon::{run_icon_add, IconManifest};
 
 /// The Frame framework CLI.
 #[derive(Parser, Debug)]
@@ -124,6 +127,27 @@ pub enum Commands {
         /// Target platform to check: `android`, `ios`, or `all` (default).
         #[arg(long, default_value = "all")]
         target: String,
+    },
+
+    /// Regenerate example projects (examples/blog-app MVC + examples/profile Clean Architecture).
+    InitExamples,
+
+    /// Manage icons in the project.
+    Icon {
+        #[command(subcommand)]
+        action: IconCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum IconCommands {
+    /// Add an SVG icon to the project.
+    Add {
+        /// Path to the SVG file.
+        path: String,
+        /// Optional name for the icon (defaults to filename without extension).
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 

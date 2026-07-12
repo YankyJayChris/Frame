@@ -1,27 +1,25 @@
+import { text, column } "frame-core"
+
 component UserCard: {
-    props: {
-        name:  string = ""
-        email: string = ""
-    }
-    styles: {
-        border_radius: 8dp
-        overflow: hidden
-        padding: 12dp
-        margin_bottom: 8dp
-    }
-    children: [
-        column: {
-            styles: { gap: 4dp }
-            children: [
-                text: {
-                    content: $name
-                    styles: { font_size: 16sp  font_weight: "bold" }
-                }
-                text: {
-                    content: $email
-                    styles: { font_size: 14sp }
-                }
-            ]
-        }
-    ]
+props: {
+name: string = ""
+email: string = ""
+bio: string = ""
+}
+styles: {
+padding: 12dp
+border_radius: 8dp
+overflow: hidden
+margin_bottom: 8dp
+}
+children: [
+column: {
+styles: { gap: 4dp }
+children: [
+text: { content: name  styles: { font_size: 16sp  font_weight: "bold" } }
+text: { content: email  styles: { font_size: 14sp } }
+text: { content: bio  styles: { font_size: 14sp  font_style: "italic" } }
+]
+}
+]
 }

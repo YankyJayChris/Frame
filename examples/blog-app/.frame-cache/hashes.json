@@ -1,0 +1,11 @@
+{
+  "./src/tests/navigation.test.fr": "4523b7fec993f203e8563a7baa82f5d16faa9b4e919b7e84b80d80332340a0d2",
+  "./src/views/components/UserCard.fr": "075d2cde45e462192427117cee48530f723b63dfff2bc5d247d9fc0373e36c87",
+  "./src/models/UserObj.fr": "6ab3560e20e50d2aa0769fad4d522eccb1c372bcffcfccaeefa04e2ebe928935",
+  "./src/tests/UserStore.test.fr": "40587b089694e6a8f4d0bd207f4b69a6d43ed9c2077904af318d1e2b39b2d600",
+  "./src/controllers/UserController.fr": "1cc5103cdbb1b88ec206325615a5d1b2141eceab405ddc569d1bf00f77226ece",
+  "./src/project.fr": "bd559e840d40615160627243ad95d28bd878d4f63816ba71ca3693ed275c3ffb",
+  "./src/models/UserStore.fr": "254a411b6ca75b2b3601a28363d3adf67aaa9e4e799ea61eb1c9e6ba76bb00a1",
+  "./src/views/pages/HomePage.fr": "22d31e5d0f3957b014ace0f0c754bf9d8ba300d0f620d0bb03bd2b4cad9bd4ff",
+  "./src/tests/api.test.fr": "98f2de0facb3759a49fa8dd72e96a65c19eb722222afbe7592c78a03221c2d30"
+}

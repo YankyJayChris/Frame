@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 
 /// Install a plugin into `frame_modules/<name>/`.
 ///
-/// Since there is no live registry, this creates a stub plugin directory
-/// and updates frame.config.json + frame.lock.
+/// Supports:
+/// - `@user/repo` — clones from `https://github.com/user/repo.git` (Phase 6b)
+/// - `plugin-name` — local stub if not found in registry
 pub fn plugin_add(name: &str, project_root: &Path) -> bool {
     let modules_dir = project_root.join("frame_modules");
     let plugin_dir = modules_dir.join(name);
@@ -26,7 +27,12 @@ pub fn plugin_add(name: &str, project_root: &Path) -> bool {
         return true;
     }
 
-    // Try to download from registry (may not be reachable)
+    // Phase 6b: Handle @user/repo format — git clone
+    if name.starts_with('@') {
+        return install_github_plugin(name, &modules_dir, project_root);
+    }
+
+    // Try to download from registry
     let version = try_fetch_plugin_version(name).unwrap_or_else(|| "1.0.0".to_string());
 
     // Scaffold the directory structure
@@ -355,6 +361,77 @@ fn dirs_cred_path() -> PathBuf {
     let home = std::env::var("HOME")
         .unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".frame").join("credentials")
+}
+
+// ─── GitHub git clone (Phase 6b) ──────────────────────────────────────────────
+
+/// Install a plugin from a GitHub repo: `@user/repo` or `@user/repo@v1.2.3`.
+fn install_github_plugin(name: &str, modules_dir: &Path, project_root: &Path) -> bool {
+    // Parse @user/repo or @user/repo@v1.2.3
+    let at_trimmed = name.trim_start_matches('@');
+    let (repo_spec, tag) = if let Some(idx) = at_trimmed.rfind('@') {
+        let (repo, tag) = at_trimmed.split_at(idx);
+        (repo, Some(&tag[1..]))
+    } else {
+        (at_trimmed, None)
+    };
+
+    // Determine clone URL: user/repo → github.com/user/repo
+    let repo_dir_name = repo_spec.replace('/', "_");
+    let plugin_dir = modules_dir.join(&repo_dir_name);
+
+    if plugin_dir.exists() {
+        println!("Plugin '{name}' is already installed at {:?}", plugin_dir);
+        return true;
+    }
+
+    let clone_url = format!("https://github.com/{}.git", repo_spec);
+    println!("Cloning {}{} ...", clone_url,
+             tag.map(|t| format!(" (tag: {t})")).unwrap_or_default());
+
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("clone").arg(&clone_url).arg(&plugin_dir);
+    if let Some(t) = tag {
+        cmd.arg("--branch").arg(t);
+    }
+    cmd.arg("--depth").arg("1");
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("Error: git clone failed: {e}");
+            return false;
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Error: git clone failed: {stderr}");
+        // Clean up partial directory
+        let _ = std::fs::remove_dir_all(&plugin_dir);
+        return false;
+    }
+
+    println!("✓ Cloned plugin '{name}'");
+
+    // Update frame.config.json
+    let mut config = FrameConfig::load(project_root).unwrap_or_default();
+    config.plugins.entry(name.to_string())
+        .or_insert_with(|| tag.map(|t| t.to_string()).unwrap_or_else(|| "latest".to_string()));
+    if let Err(e) = config.save(project_root) {
+        eprintln!("Warning: could not update frame.config.json: {e}");
+    }
+
+    // Compute checksum and write frame.lock
+    let checksum = compute_plugin_checksum(&plugin_dir);
+    let mut lock = FrameLock::load(project_root);
+    let version = tag.unwrap_or("0.0.0").trim_start_matches('v');
+    lock.set_plugin(name, version, &checksum);
+    if let Err(e) = lock.save(project_root) {
+        eprintln!("Warning: could not update frame.lock: {e}");
+    }
+
+    true
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

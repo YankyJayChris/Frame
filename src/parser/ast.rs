@@ -5,6 +5,17 @@
 
 use std::collections::HashMap;
 
+// ─── String interpolation ─────────────────────────────────────────────────────
+
+/// A segment of a string interpolation expression.
+#[derive(Debug, Clone)]
+pub enum InterpolatedSegment {
+    /// A plain string literal part.
+    Literal(String),
+    /// An embedded expression part.
+    Expr(Box<Expr>),
+}
+
 // ─── Primitive / enum types ──────────────────────────────────────────────────
 
 /// The Frame type system: mirrors the type table in design §2.3.
@@ -18,6 +29,8 @@ pub enum FRType {
     Object,
     List,
     Nullable(Box<FRType>),
+    /// A user-defined type: `:enum`, `:type`, or `:obj` name.
+    Custom(String),
 }
 
 /// Overflow behaviour for layout containers.
@@ -159,6 +172,7 @@ pub struct Styles {
     pub border_radius: Option<String>,
     pub opacity: Option<String>,
     pub visible: Option<bool>,
+    pub safe_area: Option<bool>, // default true — extends content into safe area
     // Overflow
     pub overflow: OverflowValue,
     pub overflow_x: Option<OverflowValue>,
@@ -242,7 +256,8 @@ pub struct StoreField {
 pub struct Function {
     pub name: String,
     pub is_async: bool,
-    pub params: Vec<(String, FRType)>,
+    /// Each param: `(name, type, optional_default_expr)` — plan §1e
+    pub params: Vec<(String, FRType, Option<Expr>)>,
     pub return_type: Option<FRType>,
     pub body: Vec<Stmt>,
 }
@@ -251,7 +266,8 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct VarDecl {
     pub name: String,
-    pub type_: FRType,
+    pub mutable: bool,
+    pub type_: Option<FRType>,
     pub initializer: Option<Expr>,
 }
 
@@ -288,6 +304,19 @@ pub enum Stmt {
 }
 
 /// An expression in the AST.
+/// Options passed to navigate() — all optional, all have sensible defaults.
+#[derive(Debug, Clone, Default)]
+pub struct NavOptions {
+    /// Replace current entry in back stack instead of pushing.
+    pub replace: bool,
+    /// Pop the entire back stack to root before navigating.
+    pub clear_stack: bool,
+    /// Prevent navigating to the same route twice (Android: launchSingleTop).
+    pub single_top: bool,
+    /// Named transition animation, e.g. "slide_up", "fade", "slide_left".
+    pub transition: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     /// A literal value.
@@ -310,6 +339,20 @@ pub enum Expr {
     MethodCall(Box<Expr>, String, Vec<Expr>),
     /// An inline lambda: `(params) => { body }`.
     Lambda(Vec<String>, Vec<Stmt>),
+    /// A string with embedded expressions: `"Hello \(name)!"` or `"Hello ${name}!"`
+    Interpolated(Vec<InterpolatedSegment>),
+    /// `navigate("/route")` or `navigate("/route", replace: true, transition: "slide_up")`
+    Navigate(Box<Expr>, NavOptions),
+    /// `navigate_replace("/route")` — replace current back-stack entry.
+    NavigateReplace(Box<Expr>),
+    /// `navigate_back()` — pop one entry.
+    NavigateBack,
+    /// `navigate_back_to("/home")` — pop to a specific route.
+    NavigateBackTo(Box<Expr>),
+    /// `navigate_modal("/sheet")` — present modally.
+    NavigateModal(Box<Expr>),
+    /// `navigate_dismiss()` — dismiss current modal.
+    NavigateDismiss,
 }
 
 /// Default Expr is a Null literal.
@@ -361,6 +404,8 @@ pub enum Op {
 pub struct CallExpr {
     pub func: String,
     pub args: Vec<Expr>,
+    /// Named arguments: `name: value` pairs (plan §1g)
+    pub named_args: Vec<(String, Expr)>,
 }
 
 /// A `wait:fetch(...)` HTTP request with then/catch branches.
@@ -404,8 +449,14 @@ pub struct EventMap {
     pub on_touch_start: Option<Expr>,
     pub on_touch_move: Option<Expr>,
     pub on_touch_end: Option<Expr>,
+    /// Fires once after the node is first rendered/mounted.
     pub on_mount: Option<Expr>,
+    /// Fires when `watch` dependencies change. Maps to `LaunchedEffect(key)` / `viewDidLayoutSubviews`.
     pub on_update: Option<Expr>,
+    /// Optional dependency expression for `on_update` — e.g. a store field.
+    /// Maps to `LaunchedEffect(watch_key)` in Compose.
+    pub watch: Option<Expr>,
+    /// Fires when the node is removed from the tree / view hierarchy.
     pub on_unmount: Option<Expr>,
 }
 
@@ -451,8 +502,27 @@ pub struct ComponentDef {
 pub struct Page {
     pub name: String,
     pub route: String,
-    pub before_enter: Option<String>,
-    pub before_leave: Option<String>,
+    /// Typed route params declared on the page, e.g. `params: { userId: string }`.
+    /// At codegen time these become typed function/init parameters.
+    pub params: Vec<(String, FRType)>,
+    /// Called (as expr) before the page transition completes — use for auth guards.
+    /// Maps to `LaunchedEffect(Unit)` / `viewWillAppear`.
+    pub before_enter: Option<Expr>,
+    /// Called (as expr) as the page begins to leave — use for cleanup.
+    /// Maps to `DisposableEffect/onDispose` / `viewDidDisappear`.
+    pub before_leave: Option<Expr>,
+    /// Called after the page is fully visible.
+    /// Maps to a second `LaunchedEffect(Unit)` / `viewDidAppear`.
+    pub on_mount: Option<Expr>,
+    /// Called when the page goes to background (app-level).
+    /// Maps to `Lifecycle.Event.ON_PAUSE` observer / `sceneWillResignActive`.
+    pub on_background: Option<Expr>,
+    /// Called when the page returns to foreground (app-level).
+    /// Maps to `Lifecycle.Event.ON_RESUME` observer / `sceneDidBecomeActive`.
+    pub on_foreground: Option<Expr>,
+    /// Called just before the page is fully removed.
+    /// Maps to `DisposableEffect/onDispose` (combined with before_leave) / `viewDidDisappear`.
+    pub on_unmount: Option<Expr>,
     pub styles: Styles,
     pub state: HashMap<String, StateField>,
     pub children: Vec<ComponentNode>,
@@ -578,6 +648,48 @@ pub struct PluginCall {
     pub params: HashMap<String, Expr>,
 }
 
+/// A single enum variant with an optional string value.
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub value: Option<String>,
+}
+
+/// A user-defined `:enum` declaration.
+#[derive(Debug, Clone)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+/// A user-defined `:type` alias.
+#[derive(Debug, Clone)]
+pub struct TypeAlias {
+    pub alias: String,
+    pub target: FRType,
+}
+
+/// A single validation rule for a field.
+#[derive(Debug, Clone)]
+pub struct ValidationRule {
+    pub name: String,
+    pub arg: Option<Expr>,
+}
+
+/// A field in a `:validation` block.
+#[derive(Debug, Clone)]
+pub struct ValidationField {
+    pub field: String,
+    pub rules: Vec<ValidationRule>,
+}
+
+/// A `:validation` schema definition.
+#[derive(Debug, Clone)]
+pub struct ValidationSchema {
+    pub name: String,
+    pub fields: Vec<ValidationField>,
+}
+
 // ─── Top-level AST ────────────────────────────────────────────────────────────
 
 /// The root of a parsed Frame project.
@@ -585,8 +697,10 @@ pub struct PluginCall {
 pub struct AST {
     pub vars: HashMap<String, String>,
     pub i18n: HashMap<String, String>,
+    pub enums: HashMap<String, EnumDef>,
+    pub type_aliases: HashMap<String, TypeAlias>,
     pub stores: HashMap<String, StoreSlice>,
-    pub objects: HashMap<String, ObjDef>,   // :obj type declarations
+    pub objects: HashMap<String, ObjDef>,
     pub imports: Vec<Import>,
     pub consts: HashMap<String, ConstValue>,
     pub pages: Vec<Page>,
@@ -595,4 +709,13 @@ pub struct AST {
     pub tests: Vec<TestSuite>,
     pub breakpoints: Vec<Breakpoint>,
     pub typography: HashMap<String, TypographyStyle>,
+    /// `:validation` schema blocks (plan §5a)
+    pub validations: HashMap<String, ValidationSchema>,
+    /// App-level lifecycle hooks — called once per app session.
+    /// `on_launch`  → Android `Application.onCreate` / iOS `didFinishLaunchingWithOptions`
+    /// `on_foreground` → Android `ProcessLifecycleOwner ON_START` / iOS `sceneWillEnterForeground`
+    /// `on_background` → Android `ProcessLifecycleOwner ON_STOP`  / iOS `sceneDidEnterBackground`
+    pub on_launch: Option<String>,
+    pub on_foreground: Option<String>,
+    pub on_background: Option<String>,
 }

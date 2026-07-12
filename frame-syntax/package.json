@@ -1,14 +1,18 @@
 {
   "name": "frame-syntax",
   "displayName": "Frame Syntax",
-  "description": "Syntax highlighting for Frame .fr files",
-  "version": "0.0.1",
+  "description": "Syntax highlighting, snippets, and language support for Frame .fr files",
+  "version": "0.1.0",
+  "publisher": "frame",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.98.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Snippets"
   ],
+  "icon": "icon.png",
   "contributes": {
     "languages": [{
       "id": "frame",
@@ -20,6 +24,10 @@
       "language": "frame",
       "scopeName": "source.frame",
       "path": "./syntaxes/frame.tmLanguage.json"
+    }],
+    "snippets": [{
+      "language": "frame",
+      "path": "./snippets/frame.code-snippets"
     }]
   }
 }

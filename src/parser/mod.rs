@@ -155,6 +155,9 @@ fn parse_file_recursive(
 fn merge_ast(target: &mut AST, src: AST) {
     target.vars.extend(src.vars);
     target.i18n.extend(src.i18n);
+    target.enums.extend(src.enums);
+    target.type_aliases.extend(src.type_aliases);
+    target.validations.extend(src.validations);
     target.stores.extend(src.stores);
     target.imports.extend(src.imports);
     target.consts.extend(src.consts);
@@ -169,7 +172,7 @@ fn merge_ast(target: &mut AST, src: AST) {
 
 // ─── Top-level file parser ────────────────────────────────────────────────────
 
-fn parse_source(source: &str, file_path: &str, errors: &mut Vec<FrameError>) -> AST {
+pub(crate) fn parse_source(source: &str, file_path: &str, errors: &mut Vec<FrameError>) -> AST {
     match FrameParser::parse(Rule::file, source) {
         Ok(pairs) => {
             let mut ast = AST::default();
@@ -186,6 +189,18 @@ fn parse_source(source: &str, file_path: &str, errors: &mut Vec<FrameError>) -> 
                             Rule::store_block => {
                                 let s = parse_store_block(inner, errors, file_path);
                                 ast.stores.insert(s.name.clone(), s);
+                            }
+                            Rule::enum_block => {
+                                let e = parse_enum_block(inner);
+                                ast.enums.insert(e.name.clone(), e);
+                            }
+                            Rule::type_alias => {
+                                let ta = parse_type_alias(inner);
+                                ast.type_aliases.insert(ta.alias.clone(), ta);
+                            }
+                            Rule::validation_block => {
+                                let vs = parse_validation_block(inner);
+                                ast.validations.insert(vs.name.clone(), vs);
                             }
                             Rule::obj_block => {
                                 let o = parse_obj_block(inner, errors, file_path);
@@ -217,6 +232,25 @@ fn parse_source(source: &str, file_path: &str, errors: &mut Vec<FrameError>) -> 
                             }
                             Rule::test_suite => {
                                 ast.tests.push(parse_test_suite(inner, errors, file_path));
+                            }
+                            Rule::app_lifecycle_block => {
+                                for entry in inner.into_inner() {
+                                    match entry.as_rule() {
+                                        Rule::app_on_launch => {
+                                            ast.on_launch = entry.into_inner().next()
+                                                .map(|p| p.as_str().to_string());
+                                        }
+                                        Rule::app_on_foreground => {
+                                            ast.on_foreground = entry.into_inner().next()
+                                                .map(|p| p.as_str().to_string());
+                                        }
+                                        Rule::app_on_background => {
+                                            ast.on_background = entry.into_inner().next()
+                                                .map(|p| p.as_str().to_string());
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
                             Rule::EOI => {}
                             _ => {}
@@ -422,6 +456,52 @@ fn parse_obj_block(pair: Pair<Rule>, _errors: &mut Vec<FrameError>, _file: &str)
     ObjDef { name, fields }
 }
 
+fn parse_validation_block(pair: Pair<Rule>) -> ValidationSchema {
+    let mut inner = pair.into_inner();
+    let name = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+    let mut fields = Vec::new();
+    for child in inner {
+        if child.as_rule() == Rule::validation_field {
+            let mut fp = child.into_inner();
+            let field_name = fp.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let mut rules = Vec::new();
+            for rp in fp {
+                if rp.as_rule() == Rule::validation_rule {
+                    let mut r_inner = rp.into_inner();
+                    let rule_name = r_inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                    let arg = r_inner.next().map(parse_expr);
+                    rules.push(ValidationRule { name: rule_name, arg });
+                }
+            }
+            fields.push(ValidationField { field: field_name, rules });
+        }
+    }
+    ValidationSchema { name, fields }
+}
+
+fn parse_enum_block(pair: Pair<Rule>) -> EnumDef {
+    let mut inner = pair.into_inner();
+    let name = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+    let mut variants = Vec::new();
+    for v in inner {
+        if v.as_rule() == Rule::enum_variant {
+            let mut vp = v.into_inner();
+            let vname = vp.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let value = vp.next().map(|p| strip_quotes(p.as_str()));
+            variants.push(EnumVariant { name: vname, value });
+        }
+    }
+    EnumDef { name, variants }
+}
+
+fn parse_type_alias(pair: Pair<Rule>) -> TypeAlias {
+    let mut inner = pair.into_inner();
+    let alias = inner.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+    let target_str = inner.next().map(|p| p.as_str().trim().to_string()).unwrap_or_default();
+    let target = parse_type_name(&target_str);
+    TypeAlias { alias, target }
+}
+
 // ─── :store block ─────────────────────────────────────────────────────────────
 
 fn parse_store_block(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> StoreSlice {
@@ -482,7 +562,10 @@ fn parse_store_fn(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) ->
             Rule::fn_params => { params = parse_fn_params(child); }
             Rule::assign_stmt | Rule::return_stmt | Rule::if_stmt | Rule::for_stmt
             | Rule::switch_stmt | Rule::try_catch_stmt | Rule::wait_fetch_stmt
-            | Rule::wait_call_stmt | Rule::call_stmt => {
+            | Rule::wait_call_stmt | Rule::method_call_stmt | Rule::call_stmt
+            | Rule::navigate_stmt | Rule::navigate_replace_stmt | Rule::navigate_back_stmt
+            | Rule::navigate_back_to_stmt | Rule::navigate_modal_stmt | Rule::navigate_dismiss_stmt
+            | Rule::plugin_call | Rule::var_decl => {
                 if let Some(s) = parse_stmt(child, errors, file) { body.push(s); }
             }
             _ => {}
@@ -494,9 +577,6 @@ fn parse_store_fn(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) ->
 // ─── fn_def ───────────────────────────────────────────────────────────────────
 
 fn parse_fn_def(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Function {
-    // Check for "async" in the raw text before fn_params
-    // Grammar: "fn" ~ ident ~ ":" ~ ("async")? ~ fn_params ~ "=>" ~ "{" ~ stmt* ~ "}"
-    // "async" is a string literal — not a named rule child, so detect via raw text.
     let raw = pair.as_str();
     let is_async = raw.contains("async");
 
@@ -517,7 +597,10 @@ fn parse_fn_def(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> F
             // stmt is a silent rule (_) so children are the actual statement rule pairs
             Rule::assign_stmt | Rule::return_stmt | Rule::if_stmt | Rule::for_stmt
             | Rule::switch_stmt | Rule::try_catch_stmt | Rule::wait_fetch_stmt
-            | Rule::wait_call_stmt | Rule::call_stmt => {
+            | Rule::wait_call_stmt | Rule::method_call_stmt | Rule::call_stmt
+            | Rule::navigate_stmt | Rule::navigate_replace_stmt | Rule::navigate_back_stmt
+            | Rule::navigate_back_to_stmt | Rule::navigate_modal_stmt | Rule::navigate_dismiss_stmt
+            | Rule::plugin_call | Rule::var_decl => {
                 if let Some(s) = parse_stmt(child, errors, file) { body.push(s); }
             }
             _ => {}
@@ -526,14 +609,16 @@ fn parse_fn_def(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> F
     Function { name, is_async, params, return_type: None, body }
 }
 
-fn parse_fn_params(pair: Pair<Rule>) -> Vec<(String, FRType)> {
+fn parse_fn_params(pair: Pair<Rule>) -> Vec<(String, FRType, Option<Expr>)> {
     let mut params = Vec::new();
     for child in pair.into_inner() {
         if child.as_rule() == Rule::param {
             let mut pi = child.into_inner();
-            let pname = pi.next().map(|p| p.as_str().to_string()).unwrap_or_default();
-            let ptype = pi.next().map(|p| parse_type_name(p.as_str())).unwrap_or_default();
-            params.push((pname, ptype));
+            let pname   = pi.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+            let ptype   = pi.next().map(|p| parse_type_name(p.as_str())).unwrap_or_default();
+            // plan §1e — optional default value after `=`
+            let default = pi.next().map(parse_expr);
+            params.push((pname, ptype, default));
         }
     }
     params
@@ -548,7 +633,7 @@ fn parse_type_name(s: &str) -> FRType {
         "object" => FRType::Object,
         "list"   => FRType::List,
         "null"   => FRType::Nullable(Box::new(FRType::String_)),
-        _        => FRType::String_,
+        _        => FRType::Custom(s.to_string()),
     }
 }
 
@@ -566,13 +651,34 @@ fn parse_page_decl(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -
                 let raw = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default();
                 page.route = strip_quotes(&raw);
             }
+            Rule::page_params => {
+                for entry in child.into_inner() {
+                    if entry.as_rule() == Rule::page_param_entry {
+                        let mut ei = entry.into_inner();
+                        let pname = ei.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                        let ptype = ei.next().map(|p| parse_type_name(p.as_str())).unwrap_or_default();
+                        page.params.push((pname, ptype));
+                    }
+                }
+            }
+            // before_enter / before_leave now accept full event_handler expressions
             Rule::page_before_enter => {
-                let raw = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default();
-                page.before_enter = Some(strip_quotes(&raw));
+                page.before_enter = child.into_inner().next().map(parse_expr);
             }
             Rule::page_before_leave => {
-                let raw = child.into_inner().next().map(|p| p.as_str().to_string()).unwrap_or_default();
-                page.before_leave = Some(strip_quotes(&raw));
+                page.before_leave = child.into_inner().next().map(parse_expr);
+            }
+            Rule::page_on_mount => {
+                page.on_mount = child.into_inner().next().map(parse_expr);
+            }
+            Rule::page_on_unmount => {
+                page.on_unmount = child.into_inner().next().map(parse_expr);
+            }
+            Rule::page_on_background => {
+                page.on_background = child.into_inner().next().map(parse_expr);
+            }
+            Rule::page_on_foreground => {
+                page.on_foreground = child.into_inner().next().map(parse_expr);
             }
             Rule::styles_block => {
                 page.styles = parse_styles_block(child);
@@ -590,7 +696,8 @@ fn parse_page_decl(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -
             }
             Rule::component_node => {
                 page.children.push(parse_component_node(child, errors, file));
-            }            _ => {}
+            }
+            _ => {}
         }
     }
     page
@@ -830,7 +937,7 @@ fn parse_build_prop(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) 
                 return Function {
                     name: "build".to_string(),
                     is_async: false,
-                    params: params.iter().map(|p| (p.clone(), FRType::Object)).collect(),
+                    params: params.iter().map(|p| (p.clone(), FRType::Object, None)).collect(),
                     return_type: None,
                     body: stmts,
                 };
@@ -841,7 +948,7 @@ fn parse_build_prop(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) 
     Function {
         name: "build".to_string(),
         is_async: false,
-        params: vec![(param, FRType::Object)],
+        params: vec![(param, FRType::Object, None)],
         return_type: None,
         body,
     }
@@ -1046,6 +1153,7 @@ fn apply_generic_style_prop(prop: Pair<Rule>, s: &mut Styles) {
         "border_radius"  => s.border_radius = Some(val),
         "opacity"        => s.opacity = Some(val),
         "visible"        => s.visible = match val.as_str() { "true" => Some(true), "false" => Some(false), _ => None },
+        "safe_area"      => s.safe_area = match val.as_str() { "true" => Some(true), "false" => Some(false), _ => None },
         _ => { s.extra.insert(key, val); }
     }
 }
@@ -1154,6 +1262,8 @@ fn apply_event_prop_to_event_map(pair: Pair<Rule>, events: &mut EventMap) {
         Rule::on_mount        => events.on_mount        = expr_opt,
         Rule::on_update       => events.on_update       = expr_opt,
         Rule::on_unmount      => events.on_unmount      = expr_opt,
+        // watch: expr — dependency key for on_update
+        Rule::on_watch        => events.watch           = expr_opt,
         _ => {}
     }
 }
@@ -1191,9 +1301,24 @@ fn parse_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Opt
         }
         Rule::assign_stmt => {
             let mut pi = pair.into_inner();
-            let name = pi.next().map(|p| p.as_str().to_string())?;
-            let expr = pi.next().map(parse_expr).unwrap_or_default();
-            Some(Stmt::Assign(name, expr))
+            let mut parts: Vec<String> = Vec::new();
+            loop {
+                let token = pi.next();
+                match token {
+                    Some(t) if t.as_rule() == Rule::ident => {
+                        parts.push(t.as_str().to_string());
+                    }
+                    Some(t) => {
+                        let name = parts.join(".");
+                        let expr = parse_expr(t);
+                        return Some(Stmt::Assign(name, expr));
+                    }
+                    None => {
+                        let name = parts.join(".");
+                        return Some(Stmt::Assign(name, Expr::Literal(Value::Null)));
+                    }
+                }
+            }
         }
         Rule::return_stmt => {
             let expr = pair.into_inner().next().map(parse_expr).unwrap_or_default();
@@ -1230,7 +1355,7 @@ fn parse_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Opt
                 }
             }
             let func = parts.join(".");
-            Some(Stmt::Wait(CallExpr { func, args }))
+            Some(Stmt::Wait(CallExpr { func, args, named_args: vec![] }))
         }
         Rule::call_stmt => {
             let mut pi = pair.into_inner();
@@ -1238,10 +1363,50 @@ fn parse_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Opt
             let args = pi.next()
                 .map(|ca| ca.into_inner().map(parse_expr).collect())
                 .unwrap_or_default();
-            Some(Stmt::Call(CallExpr { func, args }))
+            Some(Stmt::Call(CallExpr { func, args, named_args: vec![] }))
+        }
+        Rule::method_call_stmt => {
+            // ident ("." ident)+ "(" call_args ")"
+            // e.g. log.info("msg"), list.push(item)
+            let mut parts: Vec<String> = Vec::new();
+            let mut args: Vec<Expr> = Vec::new();
+            for child in pair.into_inner() {
+                match child.as_rule() {
+                    Rule::ident => parts.push(child.as_str().to_string()),
+                    Rule::call_args => {
+                        args = child.into_inner().map(parse_expr).collect();
+                    }
+                    _ => {}
+                }
+            }
+            let func = parts.join(".");
+            Some(Stmt::Call(CallExpr { func, args, named_args: vec![] }))
         }
         Rule::plugin_call => {
             Some(parse_plugin_call(pair))
+        }
+        // ── Navigate statements ────────────────────────────────────────────
+        Rule::navigate_stmt => {
+            let expr = parse_expr(pair);
+            Some(Stmt::Call(CallExpr { func: "__navigate__".to_string(), args: vec![expr], named_args: vec![] }))
+        }
+        Rule::navigate_replace_stmt => {
+            let arg = pair.into_inner().next().map(|p| strip_quotes(p.as_str())).unwrap_or_default();
+            Some(Stmt::Call(CallExpr { func: "__navigate_replace__".to_string(), args: vec![Expr::Literal(Value::Str(arg))], named_args: vec![] }))
+        }
+        Rule::navigate_back_stmt => {
+            Some(Stmt::Call(CallExpr { func: "__navigate_back__".to_string(), args: vec![], named_args: vec![] }))
+        }
+        Rule::navigate_back_to_stmt => {
+            let arg = pair.into_inner().next().map(|p| strip_quotes(p.as_str())).unwrap_or_default();
+            Some(Stmt::Call(CallExpr { func: "__navigate_back_to__".to_string(), args: vec![Expr::Literal(Value::Str(arg))], named_args: vec![] }))
+        }
+        Rule::navigate_modal_stmt => {
+            let arg = pair.into_inner().next().map(|p| strip_quotes(p.as_str())).unwrap_or_default();
+            Some(Stmt::Call(CallExpr { func: "__navigate_modal__".to_string(), args: vec![Expr::Literal(Value::Str(arg))], named_args: vec![] }))
+        }
+        Rule::navigate_dismiss_stmt => {
+            Some(Stmt::Call(CallExpr { func: "__navigate_dismiss__".to_string(), args: vec![], named_args: vec![] }))
         }
         _ => None,
     }
@@ -1270,12 +1435,19 @@ fn parse_plugin_call(pair: Pair<Rule>) -> Stmt {
 
 fn parse_var_decl(pair: Pair<Rule>) -> Stmt {
     let mut pi = pair.into_inner();
-    // var_decl = { ":var" ~ ident ~ ":" ~ type_name ~ ("=" ~ expr)? }
-    // children: ident, type_name, [expr]
+    // var_decl = { ":var" ~ "mut"? ~ ident ~ (":" ~ type_name)? ~ ("=" ~ expr)? }
+    // children: ["mut"?], ident, [type_name], [expr]
+    let mut mutable = false;
+    // Peek at first child — it's either "mut" keyword or the ident
+    let first = pi.peek().map(|p| p.as_str());
+    if first == Some("mut") {
+        mutable = true;
+        pi.next(); // consume "mut"
+    }
     let name = pi.next().map(|p| p.as_str().to_string()).unwrap_or_default();
-    let type_ = pi.next().map(|p| parse_type_name(p.as_str())).unwrap_or_default();
+    let type_ = pi.next().map(|p| parse_type_name(p.as_str()));
     let initializer = pi.next().map(parse_expr);
-    Stmt::VarDecl(VarDecl { name, type_, initializer })
+    Stmt::VarDecl(VarDecl { name, mutable, type_, initializer })
 }
 
 fn parse_if_stmt(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -> Stmt {
@@ -1405,11 +1577,44 @@ fn parse_expr(pair: Pair<Rule>) -> Expr {
             Expr::SafeNav(parts)
         }
         Rule::navigate_expr => {
+            let mut inner = pair.into_inner();
+            let route_pair = inner.next().unwrap();
+            let route = strip_quotes(route_pair.as_str());
+            // Parse nav options: replace, clear_stack, single_top, transition
+            let mut opts = crate::parser::ast::NavOptions::default();
+            for opt in inner {
+                if opt.as_rule() == Rule::nav_option {
+                    let mut oi = opt.into_inner();
+                    let key = oi.next().map(|p| p.as_str()).unwrap_or("");
+                    let val = oi.next().map(|p| p.as_str()).unwrap_or("false");
+                    match key {
+                        "replace"     => opts.replace     = val == "true",
+                        "clear_stack" => opts.clear_stack = val == "true",
+                        "single_top"  => opts.single_top  = val == "true",
+                        "transition"  => opts.transition  = Some(strip_quotes(val)),
+                        _ => {}
+                    }
+                }
+            }
+            Expr::Navigate(Box::new(Expr::Literal(Value::Str(route))), opts)
+        }
+        Rule::navigate_replace_expr => {
             let arg = pair.into_inner().next().map(|p| strip_quotes(p.as_str())).unwrap_or_default();
-            Expr::Call(CallExpr { func: "navigate".to_string(), args: vec![Expr::Literal(Value::Str(arg))] })
+            Expr::NavigateReplace(Box::new(Expr::Literal(Value::Str(arg))))
         }
         Rule::navigate_back_expr => {
-            Expr::Call(CallExpr { func: "navigate_back".to_string(), args: vec![] })
+            Expr::NavigateBack
+        }
+        Rule::navigate_back_to_expr => {
+            let arg = pair.into_inner().next().map(|p| strip_quotes(p.as_str())).unwrap_or_default();
+            Expr::NavigateBackTo(Box::new(Expr::Literal(Value::Str(arg))))
+        }
+        Rule::navigate_modal_expr => {
+            let arg = pair.into_inner().next().map(|p| strip_quotes(p.as_str())).unwrap_or_default();
+            Expr::NavigateModal(Box::new(Expr::Literal(Value::Str(arg))))
+        }
+        Rule::navigate_dismiss_expr => {
+            Expr::NavigateDismiss
         }
         Rule::lambda_expr => {
             let (params, body) = parse_lambda(pair, &mut vec![], "");
@@ -1432,7 +1637,32 @@ fn parse_expr(pair: Pair<Rule>) -> Expr {
             Expr::Var(pair.as_str().to_string())
         }
         Rule::string => {
-            Expr::Literal(Value::Str(strip_quotes(pair.as_str())))
+            let raw = pair.as_str();
+            let inner: Vec<_> = pair.into_inner().collect();
+            if inner.is_empty() {
+                Expr::Literal(Value::Str(strip_quotes(raw)))
+            } else {
+                let mut segments = Vec::new();
+                for child in inner {
+                    match child.as_rule() {
+                        Rule::string_literal_char => {
+                            segments.push(InterpolatedSegment::Literal(child.as_str().to_string()));
+                        }
+                        Rule::string_interp_paren => {
+                            if let Some(expr) = child.into_inner().next() {
+                                segments.push(InterpolatedSegment::Expr(Box::new(parse_expr(expr))));
+                            }
+                        }
+                        Rule::string_interp_brace => {
+                            if let Some(expr) = child.into_inner().next() {
+                                segments.push(InterpolatedSegment::Expr(Box::new(parse_expr(expr))));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Expr::Interpolated(segments)
+            }
         }
         Rule::float => {
             Expr::Literal(Value::Float(pair.as_str().parse().unwrap_or(0.0)))
@@ -1489,6 +1719,7 @@ fn parse_wait_fetch_to_expr(pair: Pair<Rule>) -> Expr {
     Expr::Call(CallExpr {
         func: "wait:fetch".to_string(),
         args: vec![fetch.url],
+        named_args: vec![],
     })
 }
 
@@ -1509,6 +1740,16 @@ fn parse_wait_fetch_expr(pair: Pair<Rule>) -> FetchExpr {
                         Rule::fetch_timeout => {
                             fe.timeout_ms = opt.into_inner().next()
                                 .and_then(|p| p.as_str().parse().ok());
+                        }
+                        Rule::fetch_headers => {
+                            for entry in opt.into_inner() {
+                                if entry.as_rule() == Rule::header_entry {
+                                    let mut ei = entry.into_inner();
+                                    let k = ei.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                                    let v = ei.next().map(parse_expr).unwrap_or_default();
+                                    fe.headers.insert(k, v);
+                                }
+                            }
                         }
                         Rule::fetch_body => {
                             let entries: HashMap<String, Expr> = opt.into_inner()
@@ -1553,25 +1794,46 @@ fn parse_wait_fetch_expr(pair: Pair<Rule>) -> FetchExpr {
 fn parse_wait_call_to_expr(pair: Pair<Rule>) -> Expr {
     let mut parts = Vec::new();
     let mut args = Vec::new();
+    let mut named_args = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::ident => parts.push(child.as_str().to_string()),
             Rule::call_args => {
-                args = child.into_inner().map(parse_expr).collect();
+                for item in child.into_inner() {
+                    if item.as_rule() == Rule::named_arg {
+                        let mut ni = item.into_inner();
+                        let k = ni.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                        let v = ni.next().map(parse_expr).unwrap_or_default();
+                        named_args.push((k, v));
+                    } else {
+                        args.push(parse_expr(item));
+                    }
+                }
             }
             _ => {}
         }
     }
-    Expr::Call(CallExpr { func: format!("wait:{}", parts.join(".")), args })
+    Expr::Call(CallExpr { func: format!("wait:{}", parts.join(".")), args, named_args })
 }
 
 fn parse_func_call_to_expr(pair: Pair<Rule>) -> Expr {
     let mut pi = pair.into_inner();
     let func = pi.next().map(|p| p.as_str().to_string()).unwrap_or_default();
-    let args = pi.next()
-        .map(|ca| ca.into_inner().map(parse_expr).collect())
-        .unwrap_or_default();
-    Expr::Call(CallExpr { func, args })
+    let mut args = Vec::new();
+    let mut named_args = Vec::new();
+    if let Some(ca) = pi.next() {
+        for item in ca.into_inner() {
+            if item.as_rule() == Rule::named_arg {
+                let mut ni = item.into_inner();
+                let k = ni.next().map(|p| p.as_str().to_string()).unwrap_or_default();
+                let v = ni.next().map(parse_expr).unwrap_or_default();
+                named_args.push((k, v));
+            } else {
+                args.push(parse_expr(item));
+            }
+        }
+    }
+    Expr::Call(CallExpr { func, args, named_args })
 }
 
 fn parse_method_call_to_expr(pair: Pair<Rule>) -> Expr {
@@ -1636,10 +1898,12 @@ fn parse_test_case(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -
                 tc.assertions.push(parse_assertion(child));
             }
             // test_body_stmt is silent, so we get actual stmt rule pairs directly
-            Rule::wait_fetch_stmt | Rule::wait_call_stmt
+            Rule::wait_fetch_stmt | Rule::wait_call_stmt | Rule::method_call_stmt
             | Rule::assign_stmt | Rule::call_stmt
+            | Rule::navigate_stmt | Rule::navigate_replace_stmt | Rule::navigate_back_stmt
+            | Rule::navigate_back_to_stmt | Rule::navigate_modal_stmt | Rule::navigate_dismiss_stmt
             | Rule::if_stmt | Rule::for_stmt | Rule::switch_stmt
-            | Rule::try_catch_stmt | Rule::return_stmt => {
+            | Rule::try_catch_stmt | Rule::return_stmt | Rule::var_decl => {
                 if let Some(s) = parse_stmt(child, errors, file) { tc.body.push(s); }
             }
             _ => {}
@@ -1786,6 +2050,27 @@ mod tests {
         assert!(ast.functions.contains_key("test"));
     }
 
+    #[test]
+    fn test_var_decl_mut() {
+        let src = "fn test: () => {\n    :var mut x: int = 0\n    x = 1\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
+    #[test]
+    fn test_var_decl_inferred() {
+        let src = "fn test: () => {\n    :var x = 42\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
+    #[test]
+    fn test_var_decl_mut_inferred() {
+        let src = "fn test: () => {\n    :var mut x = \"hello\"\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
     // ── :i18n block ──────────────────────────────────────────────────────────
 
     #[test]
@@ -1870,9 +2155,10 @@ mod tests {
 
     #[test]
     fn test_parse_page_before_enter() {
-        let src = "page: {\n  name: \"Profile\"\n  route: \"/profile\"\n  before_enter: \"checkAuth\"\n}";
+        let src = "page: {\n  name: \"Profile\"\n  route: \"/profile\"\n  before_enter: checkAuth\n}";
         let ast = parse_ok(src);
-        assert_eq!(ast.pages[0].before_enter, Some("checkAuth".to_string()));
+        // before_enter is now Option<Expr> — just verify it was parsed (is Some)
+        assert!(ast.pages[0].before_enter.is_some());
     }
 
     // ── component_decl ───────────────────────────────────────────────────────
@@ -1906,6 +2192,108 @@ mod tests {
         let ast = parse_ok(src);
         let f = &ast.functions["fetchData"];
         assert!(f.is_async);
+    }
+
+    #[test]
+    fn test_param_default_value() {
+        let src = "fn greet: (name: string = \"World\") => {\n  return name\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["greet"];
+        assert_eq!(f.params.len(), 1);
+        assert_eq!(f.params[0].0, "name");
+        assert!(f.params[0].2.is_some());
+    }
+
+    #[test]
+    fn test_param_no_default() {
+        let src = "fn greet: (name: string) => {\n  return name\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["greet"];
+        assert_eq!(f.params.len(), 1);
+        assert!(f.params[0].2.is_none());
+    }
+
+    #[test]
+    fn test_param_multiple_with_mixed_defaults() {
+        let src = "fn f: (a: int = 1, b: string, c: float = 3.0) => {\n  return a\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["f"];
+        assert_eq!(f.params.len(), 3);
+        assert!(f.params[0].2.is_some());
+        assert!(f.params[1].2.is_none());
+        assert!(f.params[2].2.is_some());
+    }
+
+    // ── string interpolation tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_string_interpol_paren() {
+        let src = "fn greet: (name: string) => {\n  return \"Hello \\(name)!\"\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["greet"];
+        assert_eq!(f.body.len(), 1);
+    }
+
+    #[test]
+    fn test_string_interpol_brace() {
+        let src = "fn greet: (name: string) => {\n  return \"Hello ${name}!\"\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["greet"];
+        assert_eq!(f.body.len(), 1);
+    }
+
+    #[test]
+    fn test_string_interpol_mixed() {
+        let src = "fn f: () => {\n  return \"a \\(b) c ${d} e\"\n}";
+        let ast = parse_ok(src);
+        let f = &ast.functions["f"];
+        assert_eq!(f.body.len(), 1);
+    }
+
+    // ── named args tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_named_arg_single() {
+        let src = "fn test: () => {\n  foo:(name: \"bar\")\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
+    #[test]
+    fn test_named_arg_mixed() {
+        let src = "fn test: () => {\n  foo:(\"pos\", name: \"bar\", count: 42)\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
+    #[test]
+    fn test_named_arg_expr() {
+        let src = "fn test: (x: int) => {\n  foo:(value: x)\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("test"));
+    }
+
+    // ── fetch headers tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_fetch_with_headers() {
+        let src = "fn fetchData: async () => {\n  x = wait:fetch(\"https://api.example.com\", { headers: { Authorization: \"Bearer token123\" } })\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("fetchData"));
+    }
+
+    #[test]
+    fn test_fetch_without_headers() {
+        let src = "fn fetchData: async () => {\n  x = wait:fetch(\"https://api.example.com\")\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("fetchData"));
+    }
+
+    #[test]
+    fn test_fetch_header_with_var_ref() {
+        let src = "fn fetchData: (token: string) => {\n  x = wait:fetch(\"https://api.example.com\", { headers: { Authorization: token } })\n}";
+        let ast = parse_ok(src);
+        assert!(ast.functions.contains_key("fetchData"));
     }
 
     // ── store_block ──────────────────────────────────────────────────────────
@@ -2193,5 +2581,115 @@ mod tests {
         let ast = parse_ok(src);
         assert_eq!(ast.imports.len(), 1);
         assert_eq!(ast.pages.len(), 1);
+    }
+
+    // ── :enum tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_enum_basic() {
+        let src = ":enum Status { Active, Inactive, Pending }";
+        let ast = parse_ok(src);
+        let e = ast.enums.get("Status").unwrap();
+        assert_eq!(e.variants.len(), 3);
+        assert_eq!(e.variants[0].name, "Active");
+        assert_eq!(e.variants[1].name, "Inactive");
+        assert_eq!(e.variants[2].name, "Pending");
+        assert!(e.variants[0].value.is_none());
+    }
+
+    #[test]
+    fn test_enum_with_values() {
+        let src = ":enum Color { Red = \"#FF0000\", Green = \"#00FF00\", Blue = \"#0000FF\" }";
+        let ast = parse_ok(src);
+        let e = ast.enums.get("Color").unwrap();
+        assert_eq!(e.variants.len(), 3);
+        assert_eq!(e.variants[0].value.as_deref(), Some("#FF0000"));
+        assert_eq!(e.variants[1].value.as_deref(), Some("#00FF00"));
+        assert_eq!(e.variants[2].value.as_deref(), Some("#0000FF"));
+    }
+
+    #[test]
+    fn test_enum_semicolon_separators() {
+        let src = ":enum Role { Admin; User; Guest; }";
+        let ast = parse_ok(src);
+        let e = ast.enums.get("Role").unwrap();
+        assert_eq!(e.variants.len(), 3);
+        assert_eq!(e.variants[0].name, "Admin");
+        assert_eq!(e.variants[1].name, "User");
+        assert_eq!(e.variants[2].name, "Guest");
+    }
+
+    #[test]
+    fn test_enum_empty() {
+        let src = ":enum Empty { }";
+        let ast = parse_ok(src);
+        let e = ast.enums.get("Empty").unwrap();
+        assert_eq!(e.variants.len(), 0);
+    }
+
+    #[test]
+    fn test_enum_with_trailing_import() {
+        let src = ":enum Status { Active, Inactive }\nimport { text } \"frame-core\"";
+        let ast = parse_ok(src);
+        assert!(ast.enums.contains_key("Status"));
+        assert_eq!(ast.imports.len(), 1);
+    }
+
+    #[test]
+    fn test_enum_multiple() {
+        let src = ":enum A { X, Y }\n:enum B { Z }";
+        let ast = parse_ok(src);
+        assert!(ast.enums.contains_key("A"));
+        assert!(ast.enums.contains_key("B"));
+    }
+
+    // ── :type tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_type_alias_basic() {
+        let src = ":type UserId = string";
+        let ast = parse_ok(src);
+        let ta = ast.type_aliases.get("UserId").unwrap();
+        assert_eq!(ta.alias, "UserId");
+        assert_eq!(ta.target, FRType::String_);
+    }
+
+    #[test]
+    fn test_type_alias_to_int() {
+        let src = ":type Count = int";
+        let ast = parse_ok(src);
+        let ta = ast.type_aliases.get("Count").unwrap();
+        assert_eq!(ta.target, FRType::Int);
+    }
+
+    #[test]
+    fn test_type_alias_to_float() {
+        let src = ":type Price = float";
+        let ast = parse_ok(src);
+        let ta = ast.type_aliases.get("Price").unwrap();
+        assert_eq!(ta.target, FRType::Float);
+    }
+
+    #[test]
+    fn test_type_alias_to_bool() {
+        let src = ":type Flag = bool";
+        let ast = parse_ok(src);
+        let ta = ast.type_aliases.get("Flag").unwrap();
+        assert_eq!(ta.target, FRType::Bool);
+    }
+
+    #[test]
+    fn test_type_alias_to_enum_type() {
+        let src = ":enum Status { Active, Inactive }\n:type MyStatus = Status";
+        let ast = parse_ok(src);
+        assert!(ast.type_aliases.contains_key("MyStatus"));
+    }
+
+    #[test]
+    fn test_type_alias_multiple() {
+        let src = ":type A = string\n:type B = int";
+        let ast = parse_ok(src);
+        assert!(ast.type_aliases.contains_key("A"));
+        assert!(ast.type_aliases.contains_key("B"));
     }
 }

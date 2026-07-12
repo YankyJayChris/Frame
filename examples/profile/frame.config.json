@@ -6,5 +6,9 @@
   "render_mode": "native",
   "min_android_sdk": 24,
   "min_ios": "16.0",
-  "plugins": []
+  "plugins": {
+    "frame_camera": "0.1.0",
+    "frame_storage": "0.1.0",
+    "frame_connectivity": "0.1.0"
+  }
 }

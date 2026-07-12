@@ -1,7 +1,7 @@
 //! `frame test` implementation — discover *.test.fr files, run describe:/it: blocks,
 //! assertion engine, mock: helper, --filter, --coverage, ✓/✗ output.
 
-use crate::parser::parse_project;
+use crate::parser;
 use crate::parser::ast::{
     TestSuite, Assertion, Matcher, Expr, Value,
 };
@@ -205,20 +205,41 @@ pub fn run_tests(filter: Option<String>, coverage: bool) -> bool {
         return true;
     }
 
-    // Parse to collect test suites from AST
-    let ast = match parse_project(&project_dir.to_string_lossy()) {
-        Ok(a) => a,
-        Err(errs) => {
-            eprintln!("Test runner: parse failed with {} error(s):", errs.len());
-            for e in &errs { eprintln!("  {e}"); }
-            return false;
+    // Parse each test file individually and collect all test suites.
+    // (parse_project starts at project.fr and follows imports — it never
+    // reaches *.test.fr files, so we parse them directly.)
+    let mut all_suites: Vec<crate::parser::ast::TestSuite> = Vec::new();
+    let mut parse_errors = false;
+
+    for test_file in &test_files {
+        let source = match fs::read_to_string(test_file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Could not read {:?}: {e}", test_file);
+                parse_errors = true;
+                continue;
+            }
+        };
+        let file_path = test_file.to_string_lossy();
+        let mut errors: Vec<crate::parser::FrameError> = Vec::new();
+        let ast = crate::parser::parse_source(&source, &file_path, &mut errors);
+        if !errors.is_empty() {
+            eprintln!("Parse errors in {:?}:", test_file);
+            for e in &errors { eprintln!("  {e}"); }
+            parse_errors = true;
         }
-    };
+        all_suites.extend(ast.tests);
+    }
+
+    if all_suites.is_empty() && !parse_errors {
+        println!("No describe:/it: test suites found in test files.");
+        return true;
+    }
 
     let mut all_results: Vec<TestResult> = Vec::new();
     let filter_str = filter.as_deref().unwrap_or("");
 
-    for suite in &ast.tests {
+    for suite in &all_suites {
         // Apply filter
         if !filter_str.is_empty()
             && !suite.name.contains(filter_str)
@@ -278,7 +299,7 @@ pub fn run_tests(filter: Option<String>, coverage: bool) -> bool {
         println!("  Pass rate: {pass_rate}%");
     }
 
-    fail_count == 0
+    !parse_errors && fail_count == 0
 }
 
 // ─── Value helpers ────────────────────────────────────────────────────────────

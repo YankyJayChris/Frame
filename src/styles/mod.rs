@@ -1,17 +1,25 @@
 //! Style types for the Frame framework.
 //!
-//! Full responsive style resolution.
+//! Re-exports the canonical `Styles` type from `parser::ast` so all code
+//! uses one consistent, fully-typed definition.  The old `HashMap`-based
+//! wrapper is retained as `LegacyStyles` for any callers that still need it,
+//! but all new code should use `Styles` (= `parser::ast::Styles`).
+
+// Re-export the canonical AST Styles type.
+pub use crate::parser::ast::Styles;
 
 use std::collections::HashMap;
 
+/// Legacy `HashMap<String, String>` style map — kept for backward compatibility.
+/// Prefer the canonical `Styles` struct for all new code.
 #[derive(Debug, Clone, Default)]
-pub struct Styles {
+pub struct LegacyStyles {
     pub props: HashMap<String, String>,
 }
 
-impl Styles {
+impl LegacyStyles {
     pub fn new() -> Self {
-        Styles { props: HashMap::new() }
+        LegacyStyles { props: HashMap::new() }
     }
 
     pub fn insert(&mut self, key: &str, value: &str) {

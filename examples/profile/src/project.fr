@@ -1,6 +1,7 @@
+// Frame project: profile
 :vars {
-    $primary:   "#007BFF"
-    $secondary: "#6C757D"
+    primary:   "#007BFF"
+    secondary: "#6C757D"
 }
 
 :breakpoints {
@@ -10,31 +11,67 @@
     xl: 1200dp
 }
 
-import { text, button, column, scaffold } "frame-core"
+// ── App-level lifecycle hooks ─────────────────────────────────────────────
+// Declared once here; wired into Application.onCreate / didFinishLaunching
+:app {
+    on_launch:     appInit
+    on_foreground: appForeground
+    on_background: appBackground
+}
+
+import { text, button, column, scaffold, app_bar } "frame-core"
 import { HomePage } "./presentation/pages/HomePage.fr"
 
+// ── Splash page — demonstrates before_enter as expression + navigate options ──
 page: {
     name: "Splash"
     route: "/"
-    before_enter: "checkAuth"
-    styles: { background: $primary  width: 100%  height: 100% }
+    // before_enter accepts any expression: function call, wait:, lambda
+    before_enter: checkAuth
+    // on_mount fires after fully visible (viewDidAppear / LaunchedEffect "mount")
+    on_mount: logAppOpen
+    styles: { width: 100%  height: 100%  background: $primary }
     children: [
-        column: {
-            styles: { width: 100%  height: 100% }
+        scaffold: {
+            styles: { safe_area: true }
             children: [
-                text: {
-                    content: "profile"
-                    styles: { color: "#FFFFFF"  font_size: 32sp  font_weight: "bold" }
+                app_bar: {
+                    title: "profile"
+                    leading: "line.3.horizontal"
                 }
-                button: {
-                    content: "Get Started"
-                    on_click: navigate("/home")
+                column: {
+                    styles: { width: 100%  height: 100%  padding: 32  align: "center"  justify: "center" }
+                    children: [
+                        text: { content: "profile"  styles: { color: "#FFFFFF"  font_size: 32sp  font_weight: "bold" } }
+                        spacer: { styles: { height: 16 } }
+                        text: { content: "Welcome to Frame"  styles: { color: "#FFFFFF"  font_size: 16sp } }
+                        // navigate with clear_stack: true — replaces entire back stack
+                        button: { content: "Get Started"  styles: { margin_top: 24 }  on_click: navigate("/home", clear_stack: true) }
+                    ]
                 }
             ]
         }
     ]
 }
 
+// ── App lifecycle functions ───────────────────────────────────────────────────
+fn appInit: () => {
+    log.info("App launched")
+}
+
+fn appForeground: () => {
+    log.info("App foregrounded")
+}
+
+fn appBackground: () => {
+    log.info("App backgrounded")
+}
+
+fn logAppOpen: () => {
+    log.info("Splash page visible")
+}
+
 fn checkAuth: async () => {
-    navigate("/home")
+    // Replace current entry so back won't return to splash
+    navigate("/home", replace: true)
 }

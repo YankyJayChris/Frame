@@ -7,6 +7,30 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+// ─── Extension hooks (Phase 6a) ──────────────────────────────────────────────
+
+/// A plugin can provide icons that get registered at load time.
+#[derive(Debug, Clone)]
+pub struct PluginIconProvider {
+    pub plugin_name: String,
+    pub icons: Vec<String>, // icon names
+}
+
+/// A plugin can provide fonts that get registered at load time.
+#[derive(Debug, Clone)]
+pub struct PluginFontProvider {
+    pub plugin_name: String,
+    pub fonts: Vec<String>, // font family names
+    pub font_paths: Vec<PathBuf>,
+}
+
+/// A plugin can provide custom validators.
+#[derive(Debug, Clone)]
+pub struct PluginValidatorProvider {
+    pub plugin_name: String,
+    pub validators: Vec<String>, // validator rule names
+}
+
 // ─── Semver ───────────────────────────────────────────────────────────────────
 
 /// A parsed semantic version (major.minor.patch).
@@ -178,12 +202,21 @@ impl InstalledPlugin {
 #[derive(Debug, Clone, Default)]
 pub struct PluginRegistry {
     pub plugins: HashMap<String, InstalledPlugin>,
+    // Extension hooks (Phase 6a)
+    pub icon_providers: Vec<PluginIconProvider>,
+    pub font_providers: Vec<PluginFontProvider>,
+    pub validator_providers: Vec<PluginValidatorProvider>,
 }
 
 impl PluginRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
-        PluginRegistry { plugins: HashMap::new() }
+        PluginRegistry {
+            plugins: HashMap::new(),
+            icon_providers: Vec::new(),
+            font_providers: Vec::new(),
+            validator_providers: Vec::new(),
+        }
     }
 
     /// Load all plugins from `<project_root>/frame_modules/`.
@@ -191,6 +224,7 @@ impl PluginRegistry {
     /// For each sub-directory that contains a valid `plugin.json`:
     /// - Parse the manifest
     /// - Collect `android/` and `ios/` source paths
+    /// - Collect icons, fonts, validators from plugin manifests
     pub fn load(project_root: &Path) -> Self {
         let mut registry = PluginRegistry::new();
         let modules_dir = project_root.join("frame_modules");
@@ -216,13 +250,56 @@ impl PluginRegistry {
             };
             let android_sources = collect_dir_files(&plugin_dir.join("android"));
             let ios_sources = collect_dir_files(&plugin_dir.join("ios"));
+            let name = manifest.name.clone();
+
+            // Collect extension hooks
+            let icons_dir = plugin_dir.join("assets").join("icons");
+            if icons_dir.exists() {
+                let mut icons = Vec::new();
+                if let Ok(dir) = std::fs::read_dir(&icons_dir) {
+                    for icon_entry in dir.flatten() {
+                        if let Some(stem) = icon_entry.path().file_stem().and_then(|s| s.to_str()) {
+                            icons.push(stem.to_string());
+                        }
+                    }
+                }
+                if !icons.is_empty() {
+                    registry.icon_providers.push(PluginIconProvider {
+                        plugin_name: name.clone(),
+                        icons,
+                    });
+                }
+            }
+
+            let fonts_dir = plugin_dir.join("assets").join("fonts");
+            if fonts_dir.exists() {
+                let mut fonts = Vec::new();
+                let mut font_paths = Vec::new();
+                if let Ok(dir) = std::fs::read_dir(&fonts_dir) {
+                    for font_entry in dir.flatten() {
+                        let p = font_entry.path();
+                        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                            fonts.push(stem.to_string());
+                            font_paths.push(p);
+                        }
+                    }
+                }
+                if !fonts.is_empty() {
+                    registry.font_providers.push(PluginFontProvider {
+                        plugin_name: name.clone(),
+                        fonts,
+                        font_paths,
+                    });
+                }
+            }
+
             let plugin = InstalledPlugin {
-                manifest: manifest.clone(),
+                manifest,
                 local_path: plugin_dir,
                 android_sources,
                 ios_sources,
             };
-            registry.plugins.insert(manifest.name.clone(), plugin);
+            registry.plugins.insert(name, plugin);
         }
         registry
     }

@@ -19,8 +19,16 @@ pascal_ident = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 /// Any identifier (lower or Pascal), used where both are valid
 any_ident = _{ ident }
 
-/// Double-quoted string (may contain interpolated $var or $state.field)
-string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+/// Double-quoted string — supports embedded expressions via \(expr) or ${expr}
+string = ${ "\"" ~ string_inner* ~ "\"" }
+string_inner = _{
+    string_interp_paren    // \(expr)
+  | string_interp_brace    // ${expr}
+  | string_literal_char
+}
+string_interp_paren = !{ "\\(" ~ expr ~ ")" }
+string_interp_brace = !{ "${" ~ expr ~ "}" }
+string_literal_char = @{ (!("\"" | "\\(" | "${") ~ ANY)+ }
 
 /// Integer literal
 integer = @{ "-"? ~ ASCII_DIGIT+ }
@@ -53,17 +61,39 @@ file = { SOI ~ top_level_decl* ~ EOI }
 top_level_decl = _{
     vars_block
   | i18n_block
+  | enum_block
+  | type_alias
+  | validation_block
   | obj_block
   | store_block
   | import_decl
   | const_decl
   | breakpoints_block
   | typography_block
+  | app_lifecycle_block
   | page_decl
   | component_decl
   | fn_def
   | test_suite
 }
+
+// ============================================================================
+// APP LIFECYCLE BLOCK  (top-level, declared once in project.fr)
+// ============================================================================
+
+/// :app { on_launch: fn  on_foreground: fn  on_background: fn }
+/// Hooks into the host application's process-level lifecycle.
+app_lifecycle_block = { ":app" ~ "{" ~ app_lifecycle_entry* ~ "}" }
+
+app_lifecycle_entry = _{
+    app_on_launch
+  | app_on_foreground
+  | app_on_background
+}
+
+app_on_launch     = { "on_launch"     ~ ":" ~ ident }
+app_on_foreground = { "on_foreground" ~ ":" ~ ident }
+app_on_background = { "on_background" ~ ":" ~ ident }
 
 // ============================================================================
 // IMPORTS
@@ -153,6 +183,47 @@ obj_field = {
 opt_marker = { "?" }
 
 // ============================================================================
+// :enum BLOCK
+// ============================================================================
+
+/// :enum Status { Active, Inactive, Pending }
+/// :enum Color { Red = "#FF0000"  Green = "#00FF00"  Blue = "#0000FF" }
+enum_block = {
+    ":enum" ~ ident ~ "{" ~ enum_variant* ~ "}"
+}
+
+enum_variant = {
+    ident ~ ("=" ~ string)? ~ ("," | ";")?
+}
+
+// ============================================================================
+// :type ALIAS
+// ============================================================================
+
+/// :type UserId = string
+/// :type Callback = () => void
+type_alias = {
+    ":type" ~ ident ~ "=" ~ type_name
+}
+
+// ============================================================================
+// :validation BLOCK  (plan §5a)
+// ============================================================================
+
+/// :validation UserSchema { name: required | min(2) | max(100) }
+validation_block = {
+    ":validation" ~ ident ~ "{" ~ validation_field* ~ "}"
+}
+
+validation_field = {
+    ident ~ ":" ~ validation_rule ~ ("|" ~ validation_rule)*
+}
+
+validation_rule = {
+    ident ~ ("(" ~ expr ~ ")")?
+}
+
+// ============================================================================
 // :store BLOCK
 // ============================================================================
 
@@ -192,7 +263,7 @@ fn_def = {
 
 fn_params = { "(" ~ (param ~ ","?)* ~ ")" }
 
-param = { ident ~ ":" ~ type_name }
+param = { ident ~ ":" ~ type_name ~ ("=" ~ expr)? }
 
 type_name = { "int" | "float" | "bool" | "string" | "object" | "list" | "null" | ident }
 
@@ -204,8 +275,13 @@ stmt = _{
     var_decl
   | wait_fetch_stmt
   | wait_call_stmt
+  | method_call_stmt
   | navigate_stmt
+  | navigate_replace_stmt
   | navigate_back_stmt
+  | navigate_back_to_stmt
+  | navigate_modal_stmt
+  | navigate_dismiss_stmt
   | assign_stmt
   | if_stmt
   | for_stmt
@@ -216,17 +292,40 @@ stmt = _{
   | plugin_call
 }
 
-/// navigate("/path") as a standalone statement
-navigate_stmt = { "navigate" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+/// navigate("/path")
+/// navigate("/profile/\(id)")
+/// navigate("/path", replace: true)
+/// navigate("/path", clear_stack: true)
+/// navigate("/path", transition: "slide_up")
+navigate_stmt = {
+    "navigate" ~ "(" ~ (string | dollar_var | ident) ~ ("," ~ nav_option ~ ","?)* ~ ")"
+}
 
-/// navigate_back() as a standalone statement
+/// navigate_replace("/path") — replace current entry in back stack
+navigate_replace_stmt = { "navigate_replace" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_back() — pop one entry
 navigate_back_stmt = { "navigate_back" ~ "(" ~ ")" }
 
+/// navigate_back_to("/home") — pop to a specific named route
+navigate_back_to_stmt = { "navigate_back_to" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_modal("/sheet") — present modally (sheet / dialog)
+navigate_modal_stmt = { "navigate_modal" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_dismiss() — dismiss current modal
+navigate_dismiss_stmt = { "navigate_dismiss" ~ "(" ~ ")" }
+
+/// Navigation option: key: value pair passed to navigate()
+nav_option = { ident ~ ":" ~ (bool_lit | string | ident) }
+
 /// :var x: type = expr
-var_decl = { ":var" ~ ident ~ ":" ~ type_name ~ ("=" ~ expr)? }
+/// :var mut x: type = expr
+/// :var x = expr     (type inferred)
+var_decl = { ":var" ~ "mut"? ~ ident ~ (":" ~ type_name)? ~ ("=" ~ expr)? }
 
 /// x = expr
-assign_stmt = { ident ~ "=" ~ expr }
+assign_stmt = { ident ~ ("." ~ ident)* ~ "=" ~ expr }
 
 /// return expr
 return_stmt = { "return" ~ expr }
@@ -263,7 +362,10 @@ wait_fetch_stmt = { ident ~ "=" ~ wait_fetch_expr }
 /// wait:FuncOrStore(args)  — async call statement (no assignment)
 wait_call_stmt = { "wait:" ~ ident ~ ("." ~ ident)? ~ "(" ~ call_args ~ ")" }
 
-/// Regular function call statement
+/// method.call(args) — dot-notation call statement (e.g. log.info(...), list.push(...))
+method_call_stmt = { ident ~ ("." ~ ident)+ ~ "(" ~ call_args ~ ")" }
+
+/// Regular function call statement: name:(args)
 call_stmt = { ident ~ ":" ~ "(" ~ call_args ~ ")" }
 
 // ============================================================================
@@ -294,6 +396,10 @@ primary_expr = _{
   | method_call_expr
   | wait_call_expr
   | func_call_expr
+  | navigate_replace_expr
+  | navigate_back_to_expr
+  | navigate_modal_expr
+  | navigate_dismiss_expr
   | navigate_expr
   | store_field_expr
   | state_field_expr
@@ -335,18 +441,34 @@ func_call_expr = { ident ~ ":"? ~ "(" ~ call_args ~ ")" }
 /// wait:name(args) or wait:StoreName.action(args)
 wait_call_expr = { "wait:" ~ ident ~ ("." ~ ident)? ~ "(" ~ call_args ~ ")" }
 
-/// navigate("/path")
-navigate_expr = { "navigate" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+/// navigate("/path") or navigate("/path", replace: true, transition: "slide_up")
+navigate_expr = {
+    "navigate" ~ "(" ~ (string | dollar_var | ident) ~ ("," ~ nav_option ~ ","?)* ~ ")"
+}
+
+/// navigate_replace("/path")
+navigate_replace_expr = { "navigate_replace" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
 
 /// navigate_back()
 navigate_back_expr = { "navigate_back" ~ "(" ~ ")" }
+
+/// navigate_back_to("/root")
+navigate_back_to_expr = { "navigate_back_to" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_modal("/sheet")
+navigate_modal_expr = { "navigate_modal" ~ "(" ~ (string | dollar_var | ident) ~ ")" }
+
+/// navigate_dismiss()
+navigate_dismiss_expr = { "navigate_dismiss" ~ "(" ~ ")" }
 
 /// Lambda: (param) => { body } or (param, param2) => { body }
 lambda_expr = { "(" ~ lambda_params ~ ")" ~ "=>" ~ "{" ~ stmt* ~ "}" }
 
 lambda_params = { (ident ~ ","?)* }
 
-call_args = { (expr ~ ","?)* }
+call_args = { (call_arg ~ ","?)* }
+call_arg = _{ named_arg | expr }
+named_arg = { ident ~ ":" ~ expr }
 
 // ============================================================================
 // wait:fetch EXPRESSION
@@ -369,7 +491,7 @@ fetch_option = _{
 
 fetch_method  = { "method" ~ ":" ~ (string | ident) }
 fetch_headers = { "headers" ~ ":" ~ "{" ~ header_entry* ~ "}" }
-header_entry  = { ident ~ ":" ~ (string | dollar_var) }
+header_entry  = { ident ~ ":" ~ expr ~ ","? }
 fetch_body    = { "body" ~ ":" ~ "{" ~ body_entry* ~ "}" }
 body_entry    = { ident ~ ":" ~ expr }
 fetch_timeout = { "timeout" ~ ":" ~ integer }
@@ -392,8 +514,13 @@ page_decl = {
 page_prop = _{
     page_name
   | page_route
+  | page_params
   | page_before_enter
   | page_before_leave
+  | page_on_mount
+  | page_on_unmount
+  | page_on_background
+  | page_on_foreground
   | styles_block
   | state_decl
   | children_block
@@ -402,8 +529,17 @@ page_prop = _{
 
 page_name         = { "name"         ~ ":" ~ string }
 page_route        = { "route"        ~ ":" ~ string }
-page_before_enter = { "before_enter" ~ ":" ~ string }
-page_before_leave = { "before_leave" ~ ":" ~ string }
+/// params: { userId: string  postId: int } — typed route params
+page_params       = { "params"       ~ ":" ~ "{" ~ page_param_entry* ~ "}" }
+page_param_entry  = { ident ~ ":" ~ type_name ~ ","? }
+/// before_enter / before_leave now accept a full event_handler expression (not just string name)
+page_before_enter = { "before_enter" ~ ":" ~ event_handler }
+page_before_leave = { "before_leave" ~ ":" ~ event_handler }
+/// New page-level lifecycle hooks
+page_on_mount      = { "on_mount"      ~ ":" ~ event_handler }
+page_on_unmount    = { "on_unmount"    ~ ":" ~ event_handler }
+page_on_background = { "on_background" ~ ":" ~ event_handler }
+page_on_foreground = { "on_foreground" ~ ":" ~ event_handler }
 
 // ── Page/component state block ────────────────────────────────────────────────
 state_decl = { "state:" ~ "{" ~ state_field* ~ "}" }
@@ -489,6 +625,7 @@ builtin_kind = _{
   // ── Navigation ───────────────────────────────────────────────────────────
   | "tab_bar"         // Tab-based navigation shell (TabRow / UITabBarController)
   | "tab"             // Single tab entry (Tab / UITabBarItem)
+  | "sidebar"         // Side drawer navigation (Column/UIStackView fixed-width)
   | "bottom_sheet"    // Slide-up panel (ModalBottomSheet / UISheetPresentationController)
 
   // ── Inputs ───────────────────────────────────────────────────────────────
@@ -504,6 +641,7 @@ builtin_kind = _{
   | "color_picker"    // Colour picker (no standard — custom / UIColorPickerViewController iOS 14+)
   | "rating"          // Star rating (custom Row of icons / custom)
   | "otp_input"       // OTP / PIN code field (Row of TextFields)
+  | "floating_action_button" // Floating action button (FAB / UIButton circular)
 
   // ── Display ──────────────────────────────────────────────────────────────
   | "avatar"          // Circular image (AsyncImage clipped / UIImageView)
@@ -681,6 +819,7 @@ event_prop = _{
   | on_mount
   | on_update
   | on_unmount
+  | on_watch
   | on_scroll
   | on_scroll_end
   // New gesture / interaction events
@@ -705,6 +844,8 @@ on_touch_cancel = { "on_touch_cancel" ~ ":" ~ event_handler }
 on_mount        = { "on_mount"        ~ ":" ~ event_handler }
 on_update       = { "on_update"       ~ ":" ~ event_handler }
 on_unmount      = { "on_unmount"      ~ ":" ~ event_handler }
+/// watch: expr — dependency key for on_update; maps to LaunchedEffect(key) in Compose.
+on_watch        = { "watch"           ~ ":" ~ expr }
 on_scroll       = { "on_scroll"       ~ ":" ~ event_handler }
 on_scroll_end   = { "on_scroll_end"   ~ ":" ~ event_handler }
 // New gesture / interaction events
@@ -720,6 +861,10 @@ on_swipe        = { "on_swipe"        ~ ":" ~ event_handler }
 /// An event handler value — can be a wait:-call, a direct call, lambda, or navigate
 event_handler = _{
     wait_call_expr
+  | navigate_replace_expr
+  | navigate_back_to_expr
+  | navigate_modal_expr
+  | navigate_dismiss_expr
   | navigate_expr
   | navigate_back_expr
   | lambda_expr
@@ -855,6 +1000,7 @@ test_body_stmt = _{
   | assertion
   | wait_fetch_stmt
   | wait_call_stmt
+  | method_call_stmt
   | assign_stmt
   | call_stmt
   | stmt

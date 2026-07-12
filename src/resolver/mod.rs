@@ -2,33 +2,21 @@
 
 use crate::parser::{AST, FrameError, ErrorCategory};
 use crate::parser::ast::ComponentNode;
+use crate::compiler::component_registry;
 use std::collections::{HashMap, HashSet};
 
 pub mod types;
 pub use types::type_check;
 
-/// All built-in components provided by frame-core.
-pub const BUILTIN_COMPONENTS: &[&str] = &[
-    // Original 21
-    "text", "button", "image", "icon", "row", "column", "container", "stack",
-    "list", "input", "dropdown", "form", "app_bar", "bottom_navigation_bar",
-    "scaffold", "card", "divider", "spacer", "modal", "scroll_view", "grid",
-    "plugin", "item",
-    // Feedback
-    "toast", "tooltip", "badge", "progress_bar", "progress_circle",
-    // Navigation
-    "tab_bar", "tab", "bottom_sheet",
-    // Inputs
-    "switch", "checkbox", "radio", "slider", "stepper", "text_area", "search_bar",
-    "date_picker", "time_picker", "color_picker", "rating", "otp_input",
-    // Display
-    "avatar", "chip", "tag", "banner", "table", "accordion", "timeline", "skeleton",
-    // Media
-    "video_player", "audio_player", "lottie", "web_view", "map_view",
-    "camera_view", "qr_scanner",
-    // Gestures
-    "swipeable", "draggable", "refresh", "long_press",
-];
+/// Returns true if `name` is a known built-in component.
+pub fn is_builtin_component(name: &str) -> bool {
+    component_registry().contains(name)
+}
+
+/// All built-in component names.
+pub fn builtin_components() -> Vec<&'static str> {
+    component_registry().names()
+}
 
 /// Resolve imports and validate an AST.
 ///
@@ -72,9 +60,8 @@ fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
                 }
                 let lower = name.to_lowercase();
                 let snake = pascal_to_snake(name);
-                if !BUILTIN_COMPONENTS.contains(&lower.as_str())
-                    && !BUILTIN_COMPONENTS.contains(&snake.as_str())
-                {
+                if !is_builtin_component(&lower) && !is_builtin_component(&snake) {
+                    let avail = component_registry().names().join(", ");
                     errors.push(FrameError {
                         category: ErrorCategory::UnresolvedImportError,
                         file: "<project>".to_string(),
@@ -82,9 +69,8 @@ fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
                         column: 0,
                         message: format!(
                             "Unresolved import: '{}' is not a built-in component in frame-core. \
-                             Available components: {}",
+                             Available components: {avail}",
                             name,
-                            BUILTIN_COMPONENTS.join(", ")
                         ),
                     });
                 }
@@ -306,15 +292,17 @@ mod tests {
         assert_eq!(pascal_to_snake("BottomNavigationBar"), "bottom_navigation_bar");
     }
 
-    // All 21 builtins are resolvable
+    // All builtins are resolvable
     #[test]
     fn test_all_builtins_resolve_ok() {
         let mut ast = empty_ast();
+        let names: Vec<(String, Option<String>)> = component_registry()
+            .names()
+            .into_iter()
+            .map(|s| (s.to_string(), None))
+            .collect();
         ast.imports.push(Import {
-            names: BUILTIN_COMPONENTS
-                .iter()
-                .map(|&s| (s.to_string(), None))
-                .collect(),
+            names,
             path: "frame-core".to_string(),
         });
         assert!(resolve(ast).is_ok());

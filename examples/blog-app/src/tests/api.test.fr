@@ -21,13 +21,4 @@ describe: "API" => {
     expect: "Not found" .toBe: "Not found"
   }
 
-  it: "POST returns new resource" => {
-    mock: {
-      url: "/api/users"
-      response: { id: "2"  name: "New User" }
-      status: 201
-    }
-    expect: "New User" .toContain: "New"
-  }
-
 }

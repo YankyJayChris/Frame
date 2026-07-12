@@ -1,0 +1,587 @@
+{
+  "Page": {
+    "prefix": ["page", "page:"],
+    "body": [
+      "page: {",
+      "\tname: \"${1:PageName}\"",
+      "\troute: \"/${2:route}\"",
+      "\tstyles: { width: 100%  height: 100% }",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Create a page with route and children"
+  },
+  "Scaffold": {
+    "prefix": "scaffold",
+    "body": [
+      "scaffold: {",
+      "\tstyles: { safe_area: true }",
+      "\tchildren: [",
+      "\t\t${1}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a scaffold layout component"
+  },
+  "AppBar": {
+    "prefix": "app_bar",
+    "body": [
+      "app_bar: {",
+      "\ttitle: \"${1:Title}\"",
+      "\tleading: \"${2:line.3.horizontal}\"",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add an app bar with title and optional actions"
+  },
+  "Sidebar": {
+    "prefix": "sidebar",
+    "body": [
+      "sidebar: {",
+      "\tside: \"${1|left,right|}\"",
+      "\twidth: \"${2:220}\"",
+      "\tstyles: { background: \"#F8F9FA\"  padding: 8 }",
+      "\tchildren: [",
+      "\t\ttext: { content: \"${3:Menu}\"  styles: { font_weight: \"bold\"  padding: 8 } }",
+      "\t\t${4}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a sidebar navigation panel"
+  },
+  "FAB": {
+    "prefix": ["fab", "floating_action_button"],
+    "body": [
+      "floating_action_button: {",
+      "\ticon: \"${1:plus}\"",
+      "\tposition: \"${2|bottom_right,bottom_left,top_right,top_left|}\"",
+      "\ton_click: ${3}()",
+      "}"
+    ],
+    "description": "Add a floating action button"
+  },
+  "Column": {
+    "prefix": "column",
+    "body": [
+      "column: {",
+      "\tstyles: { gap: ${1:8}  padding: ${2:16} }",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a column layout"
+  },
+  "Row": {
+    "prefix": "row",
+    "body": [
+      "row: {",
+      "\tstyles: { gap: ${1:8}  align: \"${2|center,start,end,stretch|}\" }",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a row layout"
+  },
+  "Text": {
+    "prefix": "text",
+    "body": [
+      "text: {",
+      "\tcontent: \"${1:text}\"",
+      "\tstyles: { font_size: ${2:16}sp  color: \"${3:#000000}\" }",
+      "}"
+    ],
+    "description": "Add a text element"
+  },
+  "Button": {
+    "prefix": "button",
+    "body": [
+      "button: {",
+      "\tcontent: \"${1:Click}\"",
+      "\ton_click: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add a button"
+  },
+  "Image": {
+    "prefix": "image",
+    "body": [
+      "image: {",
+      "\tsrc: \"${1:path/to/image}\"",
+      "\tstyles: { width: ${2:100}  height: ${3:100} }",
+      "}"
+    ],
+    "description": "Add an image"
+  },
+  "Icon": {
+    "prefix": "icon",
+    "body": [
+      "icon: {",
+      "\tname: \"${1:name}\"",
+      "\tstyles: { font_size: ${2:24}  color: \"${3:#000000}\" }",
+      "}"
+    ],
+    "description": "Add an icon"
+  },
+  "Card": {
+    "prefix": "card",
+    "body": [
+      "card: {",
+      "\tstyles: { padding: ${1:16}  border_radius: ${2:8}dp  elevation: ${3:2} }",
+      "\tchildren: [",
+      "\t\t${4}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a card component"
+  },
+  "Input": {
+    "prefix": "input",
+    "body": [
+      "input: {",
+      "\tplaceholder: \"${1:Enter text}\"",
+      "\tvalue: ${2:value}",
+      "\ton_change: ${3:handler}()",
+      "}"
+    ],
+    "description": "Add a text input field"
+  },
+  "Form": {
+    "prefix": "form",
+    "body": [
+      "form: {",
+      "\ton_submit: ${1:handleSubmit}()",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a form component"
+  },
+  "List": {
+    "prefix": "list",
+    "body": [
+      "list: {",
+      "\titems: ${1:items}",
+      "\tbuild: (${2:item}) => {",
+      "\t\ttext: { content: ${2:item} }",
+      "\t}",
+      "}"
+    ],
+    "description": "Add a list with dynamic items"
+  },
+  "ScrollView": {
+    "prefix": ["scroll_view", "scroll"],
+    "body": [
+      "scroll_view: {",
+      "\tstyles: { width: 100% }",
+      "\tchildren: [",
+      "\t\t${1}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a scrollable container"
+  },
+  "Divider": {
+    "prefix": "divider",
+    "body": [
+      "divider: { styles: { margin: ${1:8} } }"
+    ],
+    "description": "Add a horizontal divider"
+  },
+  "Spacer": {
+    "prefix": "spacer",
+    "body": [
+      "spacer: { styles: { height: ${1:16} } }"
+    ],
+    "description": "Add a spacer for vertical/horizontal spacing"
+  },
+  "Stack": {
+    "prefix": "stack",
+    "body": [
+      "stack: {",
+      "\tstyles: { width: 100%  height: ${1:200} }",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a stack (layered positioning)"
+  },
+  "Grid": {
+    "prefix": "grid",
+    "body": [
+      "grid: {",
+      "\tcolumns: ${1:2}",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a grid layout"
+  },
+  "Modal": {
+    "prefix": "modal",
+    "body": [
+      "modal: {",
+      "\tstyles: { padding: ${1:16} }",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a modal dialog"
+  },
+  "ProgressBar": {
+    "prefix": ["progress_bar", "progressbar"],
+    "body": [
+      "progress_bar: {",
+      "\tvalue: ${1:0.5}",
+      "}"
+    ],
+    "description": "Add a linear progress bar"
+  },
+  "ProgressCircle": {
+    "prefix": ["progress_circle", "progresscircle"],
+    "body": [
+      "progress_circle: {",
+      "\tvalue: ${1:0.5}",
+      "}"
+    ],
+    "description": "Add a circular progress indicator"
+  },
+  "Switch": {
+    "prefix": "switch",
+    "body": [
+      "switch: {",
+      "\tchecked: ${1:false}",
+      "\ton_change: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add a toggle switch"
+  },
+  "Slider": {
+    "prefix": "slider",
+    "body": [
+      "slider: {",
+      "\tvalue: ${1:0}",
+      "\tmin: ${2:0}",
+      "\tmax: ${3:100}",
+      "\ton_change: ${4:handler}()",
+      "}"
+    ],
+    "description": "Add a slider control"
+  },
+  "Stepper": {
+    "prefix": "stepper",
+    "body": [
+      "stepper: {",
+      "\tvalue: ${1:0}",
+      "\ton_increment: ${2:handleInc}()",
+      "\ton_decrement: ${3:handleDec}()",
+      "}"
+    ],
+    "description": "Add a stepper (increment/decrement)"
+  },
+  "Badge": {
+    "prefix": "badge",
+    "body": [
+      "badge: {",
+      "\tcontent: \"${1:label}\"",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a notification badge overlay"
+  },
+  "Chip": {
+    "prefix": "chip",
+    "body": [
+      "chip: {",
+      "\tcontent: \"${1:label}\"",
+      "}"
+    ],
+    "description": "Add a compact chip/tag"
+  },
+  "Tag": {
+    "prefix": "tag",
+    "body": [
+      "tag: {",
+      "\tcontent: \"${1:label}\"",
+      "}"
+    ],
+    "description": "Add a static tag pill"
+  },
+  "Avatar": {
+    "prefix": "avatar",
+    "body": [
+      "avatar: {",
+      "\tsrc: \"${1:path}\"",
+      "\tstyles: { width: ${2:40}  height: ${3:40}  border_radius: ${4:20} }",
+      "}"
+    ],
+    "description": "Add a circular avatar image"
+  },
+  "Skeleton": {
+    "prefix": "skeleton",
+    "body": [
+      "skeleton: {",
+      "\tstyles: { width: ${1:100}%  height: ${2:20} }",
+      "}"
+    ],
+    "description": "Add a loading skeleton placeholder"
+  },
+  "SearchBar": {
+    "prefix": ["search_bar", "searchbar"],
+    "body": [
+      "search_bar: {",
+      "\tplaceholder: \"${1:Search}\"",
+      "\ton_change: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add a search bar"
+  },
+  "TabBar": {
+    "prefix": ["tab_bar", "tabbar"],
+    "body": [
+      "tab_bar: {",
+      "\tchildren: [",
+      "\t\ttab: { content: \"${1:Tab}\" }",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a tab bar"
+  },
+  "Rating": {
+    "prefix": "rating",
+    "body": [
+      "rating: {",
+      "\tvalue: ${1:3}",
+      "\tmax: ${2:5}",
+      "}"
+    ],
+    "description": "Add a star rating component"
+  },
+  "Toast": {
+    "prefix": "toast",
+    "body": [
+      "toast: {",
+      "\tcontent: \"${1:message}\"",
+      "\tduration: ${2:3000}",
+      "}"
+    ],
+    "description": "Add a toast notification"
+  },
+  "WebView": {
+    "prefix": ["web_view", "webview"],
+    "body": [
+      "web_view: {",
+      "\turl: \"${1:https://example.com}\"",
+      "\tstyles: { width: 100%  height: ${2:400} }",
+      "}"
+    ],
+    "description": "Add an embedded web view"
+  },
+  "MapView": {
+    "prefix": ["map_view", "mapview"],
+    "body": [
+      "map_view: {",
+      "\tstyles: { width: 100%  height: ${1:300} }",
+      "}"
+    ],
+    "description": "Add a map view"
+  },
+  "Component": {
+    "prefix": "component",
+    "body": [
+      "component ${1:Name}: {",
+      "\tprops: {",
+      "\t\t${2:prop}: ${3:string} = ${4:\"\"}",
+      "\t}",
+      "\tstyles: {",
+      "\t\tpadding: ${5:8}",
+      "\t}",
+      "\tchildren: [",
+      "\t\t${6}",
+      "\t]",
+      "}"
+    ],
+    "description": "Create a reusable component"
+  },
+  "Store": {
+    "prefix": [":store", "store"],
+    "body": [
+      ":store ${1:Name} {",
+      "\t:var mut ${2:field}: ${3:string} = ${4:\"\"}",
+      "",
+      "\tfn ${5:action}: async (${6}) => {",
+      "\t\t${7}",
+      "\t}",
+      "}"
+    ],
+    "description": "Create a store for state management"
+  },
+  "Object": {
+    "prefix": [":obj", "obj"],
+    "body": [
+      ":obj ${1:Name} {",
+      "\t${2:field}: ${3:string}",
+      "}"
+    ],
+    "description": "Define an object type"
+  },
+  "Enum": {
+    "prefix": [":enum", "enum"],
+    "body": [
+      ":enum ${1:Name} {",
+      "\t${2:VARIANT}",
+      "}"
+    ],
+    "description": "Define an enum type"
+  },
+  "Function": {
+    "prefix": ["fn", "function"],
+    "body": [
+      "fn ${1:name}: ${2|async ,|}(${3}) => {",
+      "\t${4}",
+      "}"
+    ],
+    "description": "Define a function"
+  },
+  "If statement": {
+    "prefix": "if",
+    "body": [
+      "if ${1:condition} {",
+      "\t${2}",
+      "}${3: else {\n\\t${4}\n}}"
+    ],
+    "description": "Add an if statement"
+  },
+  "For loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:items} {",
+      "\t${3}",
+      "}"
+    ],
+    "description": "Add a for loop"
+  },
+  "Try catch": {
+    "prefix": "try",
+    "body": [
+      "try {",
+      "\t${1}",
+      "} catch (${2:err}) {",
+      "\t${3}",
+      "}"
+    ],
+    "description": "Add a try/catch block"
+  },
+  "Switch": {
+    "prefix": "switch",
+    "body": [
+      "switch ${1:expr} {",
+      "\tcase ${2:value} => {",
+      "\t\t${3}",
+      "\t}",
+      "}"
+    ],
+    "description": "Add a switch statement"
+  },
+  "Fetch": {
+    "prefix": "fetch",
+    "body": [
+      ":var ${1:result} = wait:fetch(\"${2:url}\", {",
+      "\tmethod: \"${3|GET,POST,PUT,DELETE|}\"",
+      "\theaders: {",
+      "\t\t${4}",
+      "\t}",
+      "})"
+    ],
+    "description": "Add an HTTP fetch call"
+  },
+  "Navigate": {
+    "prefix": "navigate",
+    "body": [
+      "navigate(\"${1:/route}\")"
+    ],
+    "description": "Navigate to another page"
+  },
+  "Var declaration": {
+    "prefix": ":var",
+    "body": [
+      ":var ${1:mut }${2:name}: ${3:string} = ${4:value}"
+    ],
+    "description": "Declare a local variable"
+  },
+  "Design tokens": {
+    "prefix": [":vars", "vars"],
+    "body": [
+      ":vars {",
+      "\tprimary:   \"${1:#007BFF}\"",
+      "\tsecondary: \"${2:#6C757D}\"",
+      "\t${3}",
+      "}"
+    ],
+    "description": "Define design tokens (colors, spacing)"
+  },
+  "Breakpoints": {
+    "prefix": [":breakpoints", "breakpoints"],
+    "body": [
+      ":breakpoints {",
+      "\tsm: 360dp",
+      "\tmd: 600dp",
+      "\tlg: 900dp",
+      "\txl: 1200dp",
+      "}"
+    ],
+    "description": "Define responsive breakpoints"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "import { ${1:component} } \"${2:module}\""
+    ],
+    "description": "Import from a module"
+  },
+  "I18n": {
+    "prefix": [":i18n", "i18n"],
+    "body": [
+      ":i18n ${1:locale} {",
+      "\t${2:key}: \"${3:value}\"",
+      "}"
+    ],
+    "description": "Add internationalization strings"
+  },
+  "Typography": {
+    "prefix": [":typography", "typography"],
+    "body": [
+      ":typography {",
+      "\t${1:heading}: {",
+      "\t\tfont_size: ${2:24}sp",
+      "\t\tfont_weight: \"${3:bold}\"",
+      "\t}",
+      "}"
+    ],
+    "description": "Define typography styles"
+  },
+  "Validation": {
+    "prefix": [":validation", "validation"],
+    "body": [
+      ":validation {",
+      "\t${1:field}: {",
+      "\t\trequired: ${2:true}",
+      "\t\tmin_length: ${3:3}",
+      "\t}",
+      "}"
+    ],
+    "description": "Define validation rules"
+  }
+}

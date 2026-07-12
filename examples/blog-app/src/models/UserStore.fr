@@ -1,20 +1,21 @@
 :store UserStore {
     user:       object = null
     is_loading: bool   = false
-    auth_token: string = ""
     error:      string = ""
-
-    persist: { auth_token: secure }
 
     fn load: async (id: string) => {
         UserStore.is_loading = true
         UserStore.error = ""
-        UserStore.user = wait:fetch("/api/users/$id", { method: "GET" })
+        try {
+            result = wait:fetch("/api/users/$id", { method: "GET" })
+            if result != null {
+                UserStore.user = result
+            } else {
+                UserStore.error = "User not found"
+            }
+        } catch (err) {
+            UserStore.error = err
+        }
         UserStore.is_loading = false
-    }
-
-    fn logout: () => {
-        UserStore.user = null
-        UserStore.auth_token = ""
     }
 }

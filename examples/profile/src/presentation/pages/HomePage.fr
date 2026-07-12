@@ -1,28 +1,255 @@
+import {
+  text, button, icon, image, row, column, scaffold, card, divider, spacer,
+  app_bar, sidebar, floating_action_button, list, form, input, search_bar,
+  switch, slider, rating, stepper, badge, chip, tag, progress_bar, toast,
+  modal, scroll_view, grid, avatar, banner, skeleton
+} "frame-core"
+import { UserCard } "../components/UserCard.fr"
+import { capture } "frame-camera"
+import { isOnline } "frame-connectivity"
+
 page: {
     name: "Home"
     route: "/home"
-    styles: { width: 100%  height: 100% }
+    // Page lifecycle — all accept expressions, not just string names
+    before_enter: checkNetworkAccess
+    on_mount:     loadInitialData
+    on_background: pausePolling
+    on_foreground: resumePolling
+    on_unmount:   cancelPendingRequests
+    styles: { width: 100%  height: 100%  safe_area: true }
     children: [
         scaffold: {
+            styles: { safe_area: true }
             children: [
-                column: {
-                    styles: { padding: 16dp  gap: 12dp }
+                app_bar: {
+                    title: "Frame App"
+                    leading: "line.3.horizontal"
                     children: [
-                        text: {
-                            content: "Welcome to Frame!"
-                            styles: { font_size: 24sp  font_weight: "bold" }
+                        icon: { name: "magnifyingglass"  on_click: openSearch() }
+                        icon: { name: "gearshape"  on_click: openSettings() }
+                    ]
+                }
+                row: {
+                    styles: { width: 100%  height: 100% }
+                    children: [
+                        sidebar: {
+                            side: "left"
+                            width: "220"
+                            styles: { background: "#F8F9FA"  padding: 8 }
+                            children: [
+                                text: { content: "Menu"  styles: { font_weight: "bold"  padding: 8 } }
+                                // navigate with options
+                                button: { content: "Dashboard"  on_click: navigate("/dashboard") }
+                                // navigate_replace — no back-stack entry for settings
+                                button: { content: "Profile"  on_click: navigate("/profile", replace: true) }
+                                button: { content: "Settings"  on_click: navigate_modal("/settings") }
+                                divider: {}
+                                text: { content: "Tags"  styles: { font_weight: "bold"  padding: 8 } }
+                                chip: { content: "Important" }
+                                tag: { content: "New" }
+                            ]
                         }
-                        text: {
-                            content: "Built with Clean Architecture"
-                            styles: { font_size: 16sp }
-                        }
-                        button: {
-                            content: "Load Profile"
-                            on_click: wait:UserStore.load("1")
+                        column: {
+                            // on_mount / on_update + watch on a component node
+                            on_mount:  refreshList
+                            on_update: refreshList
+                            watch:     UserStore.user
+                            on_unmount: stopRefresh
+                            styles: { padding: 16  gap: 12  width: 100%  overflow: scroll }
+                            children: [
+                                // ── Loading state ──────────────────────────────
+                                text: {
+                                    content: "Loading..."
+                                    styles: { font_size: 16sp }
+                                    show_if: UserStore.is_loading
+                                }
+                                skeleton: {
+                                    show_if: UserStore.is_loading
+                                }
+
+                                // ── User card ──────────────────────────────────
+                                UserCard: {
+                                    name: UserStore.user.name
+                                    email: UserStore.user.email
+                                    bio: UserStore.user.bio
+                                    show_if: UserStore.user != null
+                                }
+
+                                // ── Error state ───────────────────────────────
+                                text: {
+                                    content: UserStore.error
+                                    styles: { color: "#FF0000"  font_size: 14sp }
+                                    show_if: UserStore.error != ""
+                                }
+
+                                // ── Actions ───────────────────────────────────
+                                button: {
+                                    content: "Load Profile"
+                                    on_click: wait:UserStore.load("1")
+                                }
+                                button: {
+                                    content: "Capture Photo"
+                                    on_click: wait:capture("jpg", 0.9, "camera")
+                                }
+                                // Navigate to profile with typed param
+                                button: {
+                                    content: "View Profile"
+                                    on_click: navigate("/profile/1")
+                                }
+                                // Navigate back to home (clear modal/detail)
+                                button: {
+                                    content: "Back to Root"
+                                    on_click: navigate_back_to("/home")
+                                }
+
+                                // ── Card with form controls ────────────────────
+                                card: {
+                                    styles: { padding: 16  margin_top: 8 }
+                                    children: [
+                                        text: { content: "Settings"  styles: { font_size: 18sp  font_weight: "bold" } }
+                                        spacer: { styles: { height: 8 } }
+                                        row: {
+                                            styles: { align: "center"  justify: "space_between" }
+                                            children: [
+                                                text: { content: "Enable Notifications" }
+                                                switch: { value: notificationsEnabled  on_change: toggleNotifications() }
+                                            ]
+                                        }
+                                        row: {
+                                            styles: { align: "center"  justify: "space_between" }
+                                            children: [
+                                                text: { content: "Dark Mode" }
+                                                switch: { value: darkMode }
+                                            ]
+                                        }
+                                        divider: {}
+                                        text: { content: "Volume"  styles: { font_size: 14sp } }
+                                        slider: { value: volume  min: 0  max: 100  on_change: adjustVolume() }
+                                        text: { content: "Rating"  styles: { font_size: 14sp } }
+                                        rating: { value: 3  max: 5  on_change: rateApp() }
+                                        text: { content: "Quantity"  styles: { font_size: 14sp } }
+                                        stepper: { value: quantity  on_increment: inc()  on_decrement: dec() }
+                                    ]
+                                }
+
+                                // ── Search ─────────────────────────────────────
+                                search_bar: {
+                                    value: searchQuery
+                                    placeholder: "Search..."
+                                    on_change: updateQuery()
+                                }
+
+                                // ── Tags & badges ─────────────────────────────
+                                row: {
+                                    styles: { gap: 8  align: "center" }
+                                    children: [
+                                        badge: { count: 5 }
+                                        chip: { content: "Filter"  on_click: applyFilter() }
+                                        tag: { content: "Beta" }
+                                        avatar: { src: "https://i.pravatar.cc/40" }
+                                    ]
+                                }
+
+                                // ── Progress ───────────────────────────────────
+                                progress_bar: { value: 0.65 }
+                                progress_circle: { value: 0.8 }
+
+                                // ── Toast trigger ─────────────────────────────
+                                button: {
+                                    content: "Show Toast"
+                                    on_click: showToast("Hello from Frame!")
+                                }
+                            ]
                         }
                     ]
                 }
             ]
         }
+        floating_action_button: {
+            children: [
+                icon: { name: "plus"  styles: { color: "#FFFFFF"  width: 24  height: 24 } }
+            ]
+            on_click: handleAdd()
+        }
     ]
+}
+
+// ── Profile page — demonstrates typed route params ───────────────────────────
+page: {
+    name: "Profile"
+    route: "/profile/:userId"
+    params: { userId: string }
+    before_enter: checkAuth
+    on_mount:     loadProfile
+    before_leave: saveEdits
+    styles: { safe_area: true }
+    children: [
+        scaffold: {
+            styles: { safe_area: true }
+            children: [
+                app_bar: {
+                    title: "Profile"
+                    leading: "chevron.left"
+                    children: [
+                        // navigate_back — pop one entry
+                        icon: { name: "xmark"  on_click: navigate_back() }
+                    ]
+                }
+                column: {
+                    styles: { padding: 16  gap: 12 }
+                    children: [
+                        text: { content: "User ID: " }
+                        avatar: { src: "https://i.pravatar.cc/80" }
+                        button: { content: "Go Home"  on_click: navigate("/home", clear_stack: true) }
+                        button: { content: "Dismiss Modal"  on_click: navigate_dismiss() }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+// ── Page lifecycle functions ──────────────────────────────────────────────────
+fn checkNetworkAccess: async () => {
+    :var online = wait:isOnline("any")
+    if online != true {
+        navigate_modal("/offline")
+    }
+}
+
+fn loadInitialData: async () => {
+    wait:UserStore.load("1")
+}
+
+fn pausePolling: () => {
+    log.info("Home: pausing network polling")
+}
+
+fn resumePolling: () => {
+    log.info("Home: resuming network polling")
+}
+
+fn cancelPendingRequests: () => {
+    log.info("Home: cancelling pending requests")
+}
+
+fn refreshList: () => {
+    log.debug("Column: refreshing list")
+}
+
+fn stopRefresh: () => {
+    log.debug("Column: stopping refresh")
+}
+
+fn checkAuth: async () => {
+    log.info("Profile: checking auth")
+}
+
+fn loadProfile: async () => {
+    log.info("Profile: loading")
+}
+
+fn saveEdits: () => {
+    log.info("Profile: saving edits")
 }

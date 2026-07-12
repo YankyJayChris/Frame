@@ -3,7 +3,7 @@
 //! Entry point: `gen_ios(ast, config) -> Vec<OutputFile>`
 //! Mirrors android.rs — every built-in component has a UIKit mapping.
 
-#![allow(unused_variables)]
+#![allow(unused_variables, dead_code)]
 use crate::parser::ast::*;
 use std::collections::HashMap;
 
@@ -84,9 +84,13 @@ pub fn gen_ios_with_plugins(
         "SceneDelegate.swift".to_string(),
         "MainViewController.swift".to_string(),
         "KeychainHelper.swift".to_string(),
-        "UIColorExtension.swift".to_string(),   // always needed for color: styles
+        "UIColorExtension.swift".to_string(),
         "RouteHelper.swift".to_string(),
     ];
+    // App lifecycle wiring file — only when :app {} hooks are declared
+    if ast.on_launch.is_some() || ast.on_foreground.is_some() || ast.on_background.is_some() {
+        swift_sources.push("FrameAppLifecycle.swift".to_string());
+    }
     for page in &ast.pages {
         swift_sources.push(format!("{}ViewController.swift", page.name));
     }
@@ -119,8 +123,12 @@ pub fn gen_ios_with_plugins(
         uses_location, uses_location_bg, uses_notification, uses_bluetooth,
         uses_contacts, uses_calendar, uses_photos, uses_health,
         uses_speech, uses_face_id, uses_http));
-    files.push(gen_app_delegate(bundle_id, app_name));
+    files.push(gen_app_delegate(bundle_id, app_name, ast));
     files.push(gen_scene_delegate(bundle_id));
+    // Generate FrameApp lifecycle wiring if :app {} hooks are declared
+    if ast.on_launch.is_some() || ast.on_foreground.is_some() || ast.on_background.is_some() {
+        files.push(gen_frame_app_lifecycle(ast));
+    }
     files.push(gen_assets_xcassets());
     files.push(gen_podfile(config, ast));
 
@@ -145,6 +153,20 @@ pub fn gen_ios_with_plugins(
     // :obj declarations → Swift Codable structs
     for obj in ast.objects.values() {
         let f = gen_obj_swift(obj);
+        swift_sources.push(f.path.clone());
+        files.push(f);
+    }
+
+    // :enum declarations → Swift enums (plan §1b)
+    for enum_def in ast.enums.values() {
+        let f = gen_enum_swift(enum_def);
+        swift_sources.push(f.path.clone());
+        files.push(f);
+    }
+
+    // :type aliases → Swift typealiases (plan §1c)
+    for type_alias in ast.type_aliases.values() {
+        let f = gen_type_alias_swift(type_alias);
         swift_sources.push(f.path.clone());
         files.push(f);
     }
@@ -611,12 +633,6 @@ fn stmts_use_call(stmts: &[Stmt], name: &str) -> bool {
 
 // ─── Info.plist ───────────────────────────────────────────────────────────────
 
-/// Simplified shim kept for backward-compatible unit tests.
-fn gen_info_plist(config: &IosConfig, uses_camera: bool, uses_location: bool, uses_http: bool) -> OutputFile {
-    gen_info_plist_full(config, uses_camera, false, uses_location, false, false,
-        false, false, false, false, false, false, false, uses_http)
-}
-
 /// Full Info.plist generator covering every iOS privacy key category.
 #[allow(clippy::too_many_arguments)]
 fn gen_info_plist_full(
@@ -727,19 +743,32 @@ fn gen_info_plist_full(
 
 // ─── AppDelegate.swift ────────────────────────────────────────────────────────
 
-fn gen_app_delegate(bundle_id: &str, app_name: &str) -> OutputFile {
+fn gen_app_delegate(bundle_id: &str, app_name: &str, ast: &AST) -> OutputFile {
+    let has_lifecycle = ast.on_launch.is_some()
+        || ast.on_foreground.is_some()
+        || ast.on_background.is_some();
+    let lifecycle_call = if has_lifecycle {
+        "        frameRegisterAppLifecycle()\n"
+    } else {
+        ""
+    };
     OutputFile {
-        // Write to root alongside all other generated Swift files
         path: "AppDelegate.swift".to_string(),
         content: format!(r#"// AppDelegate.swift — {app_name}
 import UIKit
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {{
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {{
+        // Restore persisted store values on app launch
+        FrameStoreRegistry.shared.restoreAll()
+        // Wire :app {{ }} lifecycle hooks
+{lifecycle_call}        // Call the project-level on_launch hook (if declared in :app {{ }})
+        FrameAppLifecycle.shared.onLaunch()
         return true
     }}
 
@@ -751,7 +780,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {{
         return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
     }}
 }}
-"#, app_name = app_name),
+
+// ─── App-level lifecycle dispatcher ──────────────────────────────────────────
+/// Generated stores register restore closures here.
+/// The :app {{ }} block overrides onLaunch / onForeground / onBackground.
+class FrameStoreRegistry {{
+    static let shared = FrameStoreRegistry()
+    private var restoreClosures: [() -> Void] = []
+    func register(restore: @escaping () -> Void) {{ restoreClosures.append(restore) }}
+    func restoreAll() {{ restoreClosures.forEach {{ $0() }} }}
+}}
+
+class FrameAppLifecycle {{
+    static let shared = FrameAppLifecycle()
+    var onLaunchHandler:     (() -> Void)?
+    var onForegroundHandler: (() -> Void)?
+    var onBackgroundHandler: (() -> Void)?
+    func onLaunch()     {{ onLaunchHandler?() }}
+    func onForeground() {{ onForegroundHandler?() }}
+    func onBackground() {{ onBackgroundHandler?() }}
+}}
+"#, app_name = app_name, lifecycle_call = lifecycle_call),
     }
 }
 
@@ -772,6 +821,28 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let nav = UINavigationController(rootViewController: MainViewController())
         window?.rootViewController = nav
         window?.makeKeyAndVisible()
+    }
+
+    // ── App foreground / background ───────────────────────────────────────────
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        // App is about to become active (from background or cold start).
+        FrameAppLifecycle.shared.onForeground()
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        // App moved to background — save state, pause work.
+        FrameAppLifecycle.shared.onBackground()
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        // Scene became fully active (interruption ended or app foregrounded).
+        // This is the complement to sceneWillResignActive.
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        // About to lose focus (e.g. phone call, notification banner).
+        // Use for pausing in-progress work.
     }
 }
 "#.to_string(),
@@ -848,44 +919,126 @@ class MainViewController: UIViewController {{
 
 fn gen_page_view_controller(page: &Page, _ast: &AST, bundle_id: &str) -> OutputFile {
     let state_props = gen_swift_state_vars(&page.state);
-    let before_appear = page.before_enter.as_ref()
-        .map(|f| format!("        {}()\n", f)).unwrap_or_default();
-    let before_disappear = page.before_leave.as_ref()
-        .map(|f| format!("        {}()\n", f)).unwrap_or_default();
 
+    // Build typed init params from page.params (explicit) or route path segments
+    let route_param_list: Vec<(String, String)> = if !page.params.is_empty() {
+        page.params.iter().map(|(n, t)| {
+            let (swift_t, _) = swift_type_default(t);
+            (n.clone(), swift_t)
+        }).collect()
+    } else {
+        page.route.split('/').filter(|s| s.starts_with(':'))
+            .map(|s| (s.trim_start_matches(':').to_string(), "String".to_string()))
+            .collect()
+    };
+
+    // Swift stored properties + init
+    let param_props = route_param_list.iter()
+        .map(|(n, t)| format!("    var {n}: {t}?\n"))
+        .collect::<String>();
+    let init_params = if route_param_list.is_empty() {
+        String::new()
+    } else {
+        let params_str = route_param_list.iter()
+            .map(|(n, t)| format!("{n}: {t}? = nil"))
+            .collect::<Vec<_>>().join(", ");
+        let assigns = route_param_list.iter()
+            .map(|(n, _)| format!("        self.{n} = {n}\n"))
+            .collect::<String>();
+        format!("\n    init({params_str}) {{\n        super.init(nibName: nil, bundle: nil)\n{assigns}    }}\n\n    required init?(coder: NSCoder) {{ fatalError(\"init(coder:) not supported\") }}\n")
+    };
+
+    let before_appear = page.before_enter.as_ref()
+        .map(|e| format!("        {}()\n", emit_swift_expr(e)))
+        .unwrap_or_default();
+
+    let on_mount = page.on_mount.as_ref()
+        .map(|e| format!("        {}()\n", emit_swift_expr(e)))
+        .unwrap_or_default();
+
+    let before_disappear = {
+        let bl = page.before_leave.as_ref()
+            .map(|e| format!("        {}()\n", emit_swift_expr(e)))
+            .unwrap_or_default();
+        let um = page.on_unmount.as_ref()
+            .map(|e| format!("        {}()\n", emit_swift_expr(e)))
+            .unwrap_or_default();
+        bl + &um
+    };
+
+    let (fg_bg_props, fg_bg_setup, fg_bg_teardown) =
+        if page.on_foreground.is_some() || page.on_background.is_some() {
+            let fg_handler = page.on_foreground.as_ref()
+                .map(|e| format!("    @objc private func _onForeground() {{ {}() }}\n", emit_swift_expr(e)))
+                .unwrap_or_default();
+            let bg_handler = page.on_background.as_ref()
+                .map(|e| format!("    @objc private func _onBackground() {{ {}() }}\n", emit_swift_expr(e)))
+                .unwrap_or_default();
+            let setup_fg = if page.on_foreground.is_some() {
+                "        NotificationCenter.default.addObserver(self, selector: #selector(_onForeground),\n            name: UIApplication.willEnterForegroundNotification, object: nil)\n"
+            } else { "" };
+            let setup_bg = if page.on_background.is_some() {
+                "        NotificationCenter.default.addObserver(self, selector: #selector(_onBackground),\n            name: UIApplication.didEnterBackgroundNotification, object: nil)\n"
+            } else { "" };
+            let teardown = "        NotificationCenter.default.removeObserver(self)\n";
+            (
+                format!("{fg_handler}{bg_handler}"),
+                format!("{setup_fg}{setup_bg}"),
+                teardown.to_string(),
+            )
+        } else {
+            (String::new(), String::new(), String::new())
+    };
+
+    let has_fg_bg = !fg_bg_setup.is_empty();
     let setup_ui: String = page.children.iter()
         .map(|n| emit_uikit_view(n, "view", 2))
         .collect();
-
-    let has_fetch = page.children.iter().any(|c| c.build.is_some());
 
     OutputFile {
         path: format!("{}ViewController.swift", page.name),
         content: format!(r#"import UIKit
 
+/// Route: {route}
 class {name}ViewController: UIViewController {{
-{state_props}
+{param_props}{state_props}{init_params}
     override func viewDidLoad() {{
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
         title = "{title}"
         setupUI()
-    }}
+{fg_bg_setup}    }}
 
     override func viewWillAppear(_ animated: Bool) {{
         super.viewWillAppear(animated)
 {before_appear}    }}
 
-    override func viewWillDisappear(_ animated: Bool) {{
-        super.viewWillDisappear(animated)
+    override func viewDidAppear(_ animated: Bool) {{
+        super.viewDidAppear(animated)
+{on_mount}    }}
+
+    override func viewDidDisappear(_ animated: Bool) {{
+        super.viewDidDisappear(animated)
 {before_disappear}    }}
 
+    override func viewWillDisappear(_ animated: Bool) {{
+        super.viewWillDisappear(animated)
+    }}
+{fg_bg_props}
     private func setupUI() {{
 {setup_ui}    }}
-}}
+{deinit_block}}}
 "#,
-            name  = page.name,
-            title = page.name,
+            name       = page.name,
+            route      = page.route,
+            title      = page.name,
+            param_props = param_props,
+            init_params = init_params,
+            deinit_block = if has_fg_bg {
+                format!("\n    deinit {{\n{fg_bg_teardown}    }}\n")
+            } else {
+                String::new()
+            },
         ),
     }
 }
@@ -960,6 +1113,12 @@ fn gen_store_swift(name: &str, store: &StoreSlice, bundle_id: &str) -> OutputFil
     let secure_fields: Vec<_> = store.persist.iter().filter(|(_, s)| **s == PersistStrategy::Secure).collect();
 
     content.push_str("    init() {\n");
+    // Register with FrameStoreRegistry so AppDelegate can trigger restore on launch
+    content.push_str(&format!(
+        "        FrameStoreRegistry.shared.register {{ [weak self] in self?.restorePersistedFields() }}\n"
+    ));
+    content.push_str("        restorePersistedFields()\n    }\n\n");
+    content.push_str("    private func restorePersistedFields() {\n");
     if !local_fields.is_empty() {
         for (fname, _) in &local_fields {
             content.push_str(&format!(
@@ -981,7 +1140,13 @@ fn gen_store_swift(name: &str, store: &StoreSlice, bundle_id: &str) -> OutputFil
     sorted_actions.sort_by_key(|a| &a.name);
     for action in &sorted_actions {
         let params_str = action.params.iter()
-            .map(|(pn, pt)| { let (t, _) = swift_type_default(pt); format!("{pn}: {t}") })
+            .map(|(pn, pt, default)| {
+                let (t, _) = swift_type_default(pt);
+                match default {
+                    Some(d) => format!("{pn}: {t} = {}", emit_swift_expr(d)),
+                    None => format!("{pn}: {t}"),
+                }
+            })
             .collect::<Vec<_>>().join(", ");
         let body: String = action.body.iter().map(|s| emit_swift_stmt(s, 2)).collect();
         if action.is_async {
@@ -1102,7 +1267,7 @@ pub fn emit_uikit_view(node: &ComponentNode, parent: &str, indent: usize) -> Str
         "input"            => emit_ios_text_field(node, parent, &pad),
         "dropdown"         => emit_ios_picker(node, parent, &pad, &i1, indent),
         "form"             => emit_ios_stack(node, parent, &pad, &i1, indent, "vertical"),
-        "app_bar"          => emit_ios_navigation_bar(node, parent, &pad),
+        "app_bar"          => emit_ios_navigation_bar(node, parent, &pad, indent),
         "bottom_navigation_bar" => emit_ios_tab_bar(node, parent, &pad, &i1, indent),
         "scaffold"         => emit_ios_scaffold(node, parent, &pad, &i1, indent),
         "card"             => emit_ios_card(node, parent, &pad, &i1, indent),
@@ -1120,6 +1285,8 @@ pub fn emit_uikit_view(node: &ComponentNode, parent: &str, indent: usize) -> Str
         // ── Navigation ────────────────────────────────────────────────────
         "tab_bar"          => emit_ios_tab_bar_controller(node, parent, &pad, &i1, indent),
         "tab"              => emit_ios_tab_item(node, parent, &pad),
+        "sidebar"          => emit_ios_sidebar(node, parent, &pad, &i1, indent),
+        "floating_action_button" => emit_ios_fab(node, parent, &pad, indent),
         "bottom_sheet"     => emit_ios_bottom_sheet(node, parent, &pad, &i1, indent),
         // ── Inputs ────────────────────────────────────────────────────────
         "switch"           => emit_ios_switch(node, parent, &pad),
@@ -1151,6 +1318,9 @@ pub fn emit_uikit_view(node: &ComponentNode, parent: &str, indent: usize) -> Str
         "map_view"         => emit_ios_map_view(node, parent, &pad),
         "camera_view"      => emit_ios_camera_view(node, parent, &pad),
         "qr_scanner"       => emit_ios_qr_scanner(node, parent, &pad),
+        // ── Misc ───────────────────────────────────────────────────────────
+        "item"             => emit_ios_stack(node, parent, &pad, &i1, indent, "vertical"),
+        "plugin"           => emit_ios_plugin(node, parent, &pad),
         // ── Gestures ──────────────────────────────────────────────────────
         "swipeable"        => emit_ios_swipeable(node, parent, &pad, &i1, indent),
         "draggable"        => emit_ios_draggable(node, parent, &pad, &i1, indent),
@@ -1173,7 +1343,30 @@ pub fn emit_uikit_view(node: &ComponentNode, parent: &str, indent: usize) -> Str
         let cond_str = emit_swift_expr(cond);
         format!("{pad}if {cond_str} {{\n{body}{pad}}}\n")
     } else {
-        body
+        // Component-level lifecycle hooks emitted after view is added to hierarchy.
+        // on_mount  → DispatchQueue.main.async (runs after viewDidLoad returns)
+        // on_unmount → not directly expressible in UIKit here; documented as a comment.
+        // on_update  → DispatchQueue.main.async with key comment for dependency.
+        let mount_code = if let Some(h) = &node.events.on_mount {
+            format!("{pad}DispatchQueue.main.async {{ {}() }} // on_mount\n", emit_swift_expr(h))
+        } else {
+            String::new()
+        };
+        let update_code = if let Some(h) = &node.events.on_update {
+            let key = node.events.watch.as_ref()
+                .map(|w| emit_swift_expr(w))
+                .unwrap_or_else(|| "\"\"".to_string());
+            format!("{pad}// on_update(watch: {key}) — wire to your observation pattern\n\
+                     {pad}DispatchQueue.main.async {{ {}() }}\n", emit_swift_expr(h))
+        } else {
+            String::new()
+        };
+        let unmount_code = if let Some(h) = &node.events.on_unmount {
+            format!("{pad}// on_unmount — call {}() in deinit or viewDidDisappear\n", emit_swift_expr(h))
+        } else {
+            String::new()
+        };
+        format!("{body}{mount_code}{update_code}{unmount_code}")
     }
 }
 
@@ -1302,9 +1495,53 @@ fn emit_ios_picker(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, ind
              {pad}{parent}.addSubview({var})\n")
 }
 
-fn emit_ios_navigation_bar(node: &ComponentNode, parent: &str, pad: &str) -> String {
+fn emit_ios_navigation_bar(node: &ComponentNode, parent: &str, pad: &str, indent: usize) -> String {
+    let var = fresh_var("navBar");
     let title = node.props.get("title").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "\"\"".to_string());
-    format!("{pad}navigationItem.title = {title}\n")
+    let leading = node.props.get("leading").map(|e| emit_swift_expr(e)).unwrap_or_default();
+    let leading_block = if !leading.is_empty() && leading != "\"\"" {
+        format!("\n{pad}let {var}Leading = UIBarButtonItem(image: UIImage(systemName: {leading}), style: .plain, target: self, action: nil)\n{pad}navigationItem.leftBarButtonItem = {var}Leading")
+    } else {
+        String::new()
+    };
+    let actions: String = node.children.iter()
+        .map(|c| emit_uikit_action(c, var.as_str(), pad, indent + 1))
+        .collect();
+    let actions_block = if actions.is_empty() {
+        String::new()
+    } else {
+        format!("\n{pad}navigationItem.rightBarButtonItems = [{actions}]")
+    };
+    format!(
+        "{pad}navigationItem.title = {title}\
+         {leading_block}\
+         {actions_block}\n"
+    )
+}
+
+fn emit_uikit_action(node: &ComponentNode, _parent: &str, pad: &str, indent: usize) -> String {
+    // Emit an icon as a UIBarButtonItem for the navigation bar actions
+    let icon = node.props.get("name")
+        .or_else(|| node.props.get("icon"))
+        .map(|e| emit_swift_expr(e))
+        .unwrap_or_default();
+    let on_click = node.events.on_click.as_ref()
+        .map(|e| emit_swift_expr(e))
+        .unwrap_or_default();
+    let action_sel = if on_click.is_empty() {
+        "nil".to_string()
+    } else {
+        format!("#selector({on_click})")
+    };
+    let i_pad = "    ".repeat(indent);
+    if !icon.is_empty() && icon != "\"\"" {
+        format!("\n{i_pad}UIBarButtonItem(image: UIImage(systemName: {icon}), style: .plain, target: self, action: {action_sel})")
+    } else {
+        let text = node.props.get("content")
+            .map(|e| emit_swift_expr(e))
+            .unwrap_or_else(|| "\"\"".to_string());
+        format!("\n{i_pad}UIBarButtonItem(title: {text}, style: .plain, target: self, action: {action_sel})")
+    }
 }
 
 fn emit_ios_tab_bar(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, indent: usize) -> String {
@@ -1313,8 +1550,119 @@ fn emit_ios_tab_bar(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, in
 }
 
 fn emit_ios_scaffold(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, indent: usize) -> String {
-    let children: String = node.children.iter().map(|c| emit_uikit_view(c, parent, indent + 1)).collect();
-    children
+    let var = fresh_var("scaffold");
+    let use_safe = node.styles.safe_area.unwrap_or(true);
+    let anchor = if use_safe {
+        format!("{}.safeAreaLayoutGuide", parent)
+    } else {
+        parent.to_string()
+    };
+    let children: String = node.children.iter().map(|c| emit_uikit_view(c, var.as_str(), indent + 1)).collect();
+    format!(
+        "{pad}let {var} = UIView()\n\
+         {pad}{var}.translatesAutoresizingMaskIntoConstraints = false\n\
+         {pad}{parent}.addSubview({var})\n\
+         {pad}NSLayoutConstraint.activate([\n\
+         {pad}    {var}.topAnchor.constraint(equalTo: {anchor}.topAnchor),\n\
+         {pad}    {var}.leadingAnchor.constraint(equalTo: {anchor}.leadingAnchor),\n\
+         {pad}    {var}.trailingAnchor.constraint(equalTo: {anchor}.trailingAnchor),\n\
+         {pad}    {var}.bottomAnchor.constraint(equalTo: {anchor}.bottomAnchor),\n\
+         {pad}])\n{children}"
+    )
+}
+
+fn emit_ios_sidebar(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, indent: usize) -> String {
+    let var = fresh_var("sidebar");
+    let width = node.props.get("width")
+        .and_then(|e| if let Expr::Literal(Value::Str(s)) = e { Some(s.clone()) } else { None })
+        .unwrap_or_else(|| "260".to_string());
+    let children: String = node.children.iter().map(|c| emit_uikit_view(c, var.as_str(), indent + 1)).collect();
+    format!(
+        "{pad}let {var} = UIStackView()\n\
+         {pad}{var}.axis = .vertical\n\
+         {pad}{var}.translatesAutoresizingMaskIntoConstraints = false\n\
+         {pad}{parent}.addSubview({var})\n\
+         {pad}NSLayoutConstraint.activate([\n\
+         {pad}    {var}.topAnchor.constraint(equalTo: {parent}.topAnchor),\n\
+         {pad}    {var}.leadingAnchor.constraint(equalTo: {parent}.leadingAnchor),\n\
+         {pad}    {var}.widthAnchor.constraint(equalToConstant: {width}),\n\
+         {pad}    {var}.bottomAnchor.constraint(equalTo: {parent}.bottomAnchor),\n\
+         {pad}])\n\
+         {children}"
+    )
+}
+
+fn emit_ios_fab(node: &ComponentNode, parent: &str, pad: &str, indent: usize) -> String {
+    let var = fresh_var("fab");
+    let content = node.props.get("content")
+        .map(|e| emit_swift_expr(e)).unwrap_or_else(|| "\"\"".to_string());
+    let icon = node.props.get("icon")
+        .map(|e| emit_swift_expr(e)).unwrap_or_default();
+    let on_click = node.events.on_click.as_ref()
+        .map(|e| emit_swift_expr(e)).unwrap_or_default();
+    let tap_handler = if on_click.is_empty() {
+        String::new()
+    } else {
+        format!("\n{pad}{var}.addTarget(self, action: #selector({on_click}), for: .touchUpInside)")
+    };
+    // If children exist, use them as the FAB content (e.g. icon component)
+    if !node.children.is_empty() {
+        let content_var = fresh_var("fabContent");
+        let children: String = node.children.iter()
+            .map(|c| emit_uikit_view(c, content_var.as_str(), indent + 2))
+            .collect();
+        format!(
+            "{pad}let {var} = UIView()\n\
+             {pad}{var}.backgroundColor = UIColor(hex: \"#007AFF\")\n\
+             {pad}{var}.layer.cornerRadius = 28\n\
+             {pad}{var}.translatesAutoresizingMaskIntoConstraints = false\n\
+             {pad}{parent}.addSubview({var})\n\
+             {pad}let {content_var} = UIStackView()\n\
+             {pad}{content_var}.axis = .horizontal\n\
+             {pad}{content_var}.alignment = .center\n\
+             {pad}{content_var}.translatesAutoresizingMaskIntoConstraints = false\n\
+             {pad}{var}.addSubview({content_var})\n\
+             {pad}NSLayoutConstraint.activate([\n\
+             {pad}    {content_var}.centerXAnchor.constraint(equalTo: {var}.centerXAnchor),\n\
+             {pad}    {content_var}.centerYAnchor.constraint(equalTo: {var}.centerYAnchor),\n\
+             {pad}])\
+             {tap_handler}\n{children}\
+             {pad}NSLayoutConstraint.activate([\n\
+             {pad}    {var}.trailingAnchor.constraint(equalTo: {parent}.trailingAnchor, constant: -16),\n\
+             {pad}    {var}.bottomAnchor.constraint(equalTo: {parent}.bottomAnchor, constant: -16),\n\
+             {pad}    {var}.widthAnchor.constraint(equalToConstant: 56),\n\
+             {pad}    {var}.heightAnchor.constraint(equalToConstant: 56),\n\
+             {pad}])\n"
+        )
+    } else {
+        let title = if !content.is_empty() && content != "\"\"" {
+            format!("\n{pad}{var}.setTitle({content}, for: .normal)")
+        } else {
+            String::new()
+        };
+        let icon_setup = if !icon.is_empty() && icon != "\"\"" {
+            format!("\n{pad}{var}.setImage(UIImage(systemName: {icon}), for: .normal)")
+        } else if content.is_empty() || content == "\"\"" {
+            "\n{pad}{var}.setImage(UIImage(systemName: \"plus\"), for: .normal)".to_string()
+        } else {
+            String::new()
+        };
+        format!(
+            "{pad}let {var} = UIButton(type: .system)\n\
+             {pad}{var}.backgroundColor = UIColor(hex: \"#007AFF\")\n\
+             {pad}{var}.tintColor = .white\n\
+             {pad}{var}.layer.cornerRadius = 28\n\
+             {pad}{var}.translatesAutoresizingMaskIntoConstraints = false\
+             {title}{icon_setup}{tap_handler}\n\
+             {pad}{parent}.addSubview({var})\n\
+             {pad}NSLayoutConstraint.activate([\n\
+             {pad}    {var}.trailingAnchor.constraint(equalTo: {parent}.trailingAnchor, constant: -16),\n\
+             {pad}    {var}.bottomAnchor.constraint(equalTo: {parent}.bottomAnchor, constant: -16),\n\
+             {pad}    {var}.widthAnchor.constraint(equalToConstant: 56),\n\
+             {pad}    {var}.heightAnchor.constraint(equalToConstant: 56),\n\
+             {pad}])\n"
+        )
+    }
 }
 
 fn emit_ios_card(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, indent: usize) -> String {
@@ -1381,7 +1729,17 @@ fn emit_ios_toast(node: &ComponentNode, parent: &str, pad: &str) -> String {
 
 fn emit_ios_tooltip(node: &ComponentNode, parent: &str, pad: &str) -> String {
     let text = node.props.get("text").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "\"\"".to_string());
-    format!("{pad}// tooltip: {text} (use UIPopoverPresentationController or a custom tooltip library)\n")
+    let var = fresh_var("tooltipLabel");
+    format!("{pad}let {var} = UILabel()\n\
+             {pad}{var}.text = {text}\n\
+             {pad}{var}.font = UIFont.systemFont(ofSize: 12)\n\
+             {pad}{var}.textColor = .white\n\
+             {pad}{var}.backgroundColor = UIColor.darkGray.withAlphaComponent(0.8)\n\
+             {pad}{var}.layer.cornerRadius = 4\n\
+             {pad}{var}.clipsToBounds = true\n\
+             {pad}{var}.sizeToFit()\n\
+             {pad}{var}.isHidden = true\n\
+             {pad}{parent}.addSubview({var})\n")
 }
 
 fn emit_ios_badge(node: &ComponentNode, parent: &str, pad: &str, _i1: &str, indent: usize) -> String {
@@ -1529,8 +1887,13 @@ fn emit_ios_time_picker(node: &ComponentNode, parent: &str, pad: &str) -> String
 }
 
 fn emit_ios_color_picker(node: &ComponentNode, parent: &str, pad: &str) -> String {
+    let value = node.props.get("value").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "UIColor.blue".to_string());
     let on_change = node.events.on_change.as_ref().map(|e| emit_swift_expr(e)).unwrap_or_else(|| "{}".to_string());
-    format!("{pad}// color_picker: use UIColorPickerViewController (iOS 14+)\n\
+    let var = fresh_var("colorWell");
+    format!("{pad}let {var} = UIColorWell(frame: .zero)\n\
+             {pad}{var}.selectedColor = {value}\n\
+             {pad}{var}.addTarget(self, action: #selector(colorChanged(_:)), for: .valueChanged)\n\
+             {pad}{parent}.addSubview({var})\n\
              {pad}// on_change: {on_change}\n")
 }
 
@@ -1655,7 +2018,12 @@ fn emit_ios_video_player(node: &ComponentNode, parent: &str, pad: &str) -> Strin
 
 fn emit_ios_audio_player(node: &ComponentNode, parent: &str, pad: &str) -> String {
     let src = node.props.get("src").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "\"\"".to_string());
-    format!("{pad}// audio_player: AVAudioPlayer from {src}\n")
+    let var = fresh_var("audioPlayer");
+    format!("{pad}if let url = URL(string: {src}) {{\n\
+             {pad}    let {var} = try? AVAudioPlayer(contentsOf: url)\n\
+             {pad}    {var}?.prepareToPlay()\n\
+             {pad}    {var}?.play()\n\
+             {pad}}}\n")
 }
 
 fn emit_ios_lottie(node: &ComponentNode, parent: &str, pad: &str) -> String {
@@ -1700,7 +2068,13 @@ fn emit_ios_camera_view(node: &ComponentNode, parent: &str, pad: &str) -> String
 
 fn emit_ios_qr_scanner(node: &ComponentNode, parent: &str, pad: &str) -> String {
     let on_scan = node.props.get("on_scan").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "{}".to_string());
-    format!("{pad}// qr_scanner: AVFoundation metadataOutput\n\
+    let var = fresh_var("captureSession");
+    format!("{pad}let {var} = AVCaptureSession()\n\
+             {pad}guard let device = AVCaptureDevice.default(for: .video) else {{ return }}\n\
+             {pad}guard let input = try? AVCaptureDeviceInput(device: device) else {{ return }}\n\
+             {pad}{var}.addInput(input)\n\
+             {pad}let previewLayer = AVCaptureVideoPreviewLayer(session: {var})\n\
+             {pad}{parent}.layer.addSublayer(previewLayer)\n\
              {pad}// on_scan: {on_scan}\n")
 }
 
@@ -1740,6 +2114,18 @@ fn emit_ios_long_press(node: &ComponentNode, parent: &str, pad: &str, _i1: &str,
              {pad}// on_long_press: {on_long_press}\n{children}")
 }
 
+fn emit_ios_plugin(node: &ComponentNode, parent: &str, pad: &str) -> String {
+    let name = node.props.get("name").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "\"\"".to_string());
+    let method = node.props.get("method").map(|e| emit_swift_expr(e)).unwrap_or_else(|| "\"\"".to_string());
+    let args: Vec<String> = node.props.iter()
+        .filter(|(k, _)| *k != "name" && *k != "method")
+        .map(|(k, v)| format!("{}: {}", k, emit_swift_expr(v)))
+        .collect();
+    let args_str = if args.is_empty() { String::new() } else { format!(", {}", args.join(", ")) };
+    format!("{pad}let pluginView = PluginBridge.call(name: {name}, method: {method}{args_str})\n\
+             {pad}{parent}.addSubview(pluginView)\n")
+}
+
 // ─── Swift expression / statement emitters ───────────────────────────────────
 
 pub fn emit_swift_expr(expr: &Expr) -> String {
@@ -1764,9 +2150,50 @@ pub fn emit_swift_expr(expr: &Expr) -> String {
         Expr::Call(c) if c.func == "navigate_back" => {
             "navigationController?.popViewController(animated: true)".to_string()
         }
+        // ── New typed navigate variants ────────────────────────────────────
+        Expr::Navigate(route, opts) => {
+            let r = emit_swift_expr(route);
+            if opts.clear_stack {
+                format!("navigationController?.setViewControllers([routeVC(for: {r})], animated: true)")
+            } else if opts.replace {
+                format!(
+                    "navigationController?.popViewController(animated: false)\nnavigationController?.pushViewController(routeVC(for: {r}), animated: {})",
+                    if opts.transition.is_some() { "true" } else { "false" }
+                )
+            } else {
+                let animated = opts.transition.as_deref() != Some("none");
+                format!("navigationController?.pushViewController(routeVC(for: {r}), animated: {animated})")
+            }
+        }
+        Expr::NavigateReplace(route) => {
+            let r = emit_swift_expr(route);
+            format!("navigationController?.popViewController(animated: false)\nnavigationController?.pushViewController(routeVC(for: {r}), animated: false)")
+        }
+        Expr::NavigateBack => "navigationController?.popViewController(animated: true)".to_string(),
+        Expr::NavigateBackTo(route) => {
+            let r = emit_swift_expr(route);
+            // Pop to the matching VC by route tag
+            format!("if let target = navigationController?.viewControllers.first(where: {{ ($0 as? FrameRoutable)?.frameRoute == {r} }}) {{ navigationController?.popToViewController(target, animated: true) }}")
+        }
+        Expr::NavigateModal(route) => {
+            let r = emit_swift_expr(route);
+            format!("present(routeVC(for: {r}), animated: true)")
+        }
+        Expr::NavigateDismiss => "dismiss(animated: true)".to_string(),
         Expr::Call(c) => {
-            let args: String = c.args.iter().map(|a| emit_swift_expr(a)).collect::<Vec<_>>().join(", ");
-            format!("{}({})", c.func, args)
+            let mut parts: Vec<String> = c.args.iter().map(|a| emit_swift_expr(a)).collect();
+            for (k, v) in &c.named_args {
+                parts.push(format!("{}: {}", k, emit_swift_expr(v)));
+            }
+            if c.func.contains('.') {
+                if let Some(translated) = crate::stdlib::translate_stdlib_call(&c.func, &parts, "ios") {
+                    translated
+                } else {
+                    format!("{}({})", c.func, parts.join(", "))
+                }
+            } else {
+                format!("{}({})", c.func, parts.join(", "))
+            }
         }
         Expr::NullCoalesce(a, b) => format!("{} ?? {}", emit_swift_expr(a), emit_swift_expr(b)),
         Expr::SafeNav(parts) => parts.join("?."),
@@ -1778,6 +2205,15 @@ pub fn emit_swift_expr(expr: &Expr) -> String {
             let p = params.join(", ");
             let stmts: String = body.iter().map(|s| emit_swift_stmt(s, 1)).collect();
             format!("{{ {p} in {stmts} }}")
+        }
+        Expr::Interpolated(segments) => {
+            // Swift string interpolation: "Hello \(name)!"
+            use crate::parser::ast::InterpolatedSegment;
+            let inner: String = segments.iter().map(|seg| match seg {
+                InterpolatedSegment::Literal(s) => s.clone(),
+                InterpolatedSegment::Expr(e)    => format!("\\({})", emit_swift_expr(e)),
+            }).collect();
+            format!("\"{}\"", inner)
         }
     }
 }
@@ -1806,16 +2242,25 @@ pub fn emit_swift_stmt(stmt: &Stmt, indent: usize) -> String {
     let pad = "    ".repeat(indent);
     match stmt {
         Stmt::VarDecl(vd) => {
-            let (sw_type, sw_default) = swift_type_default(&vd.type_);
+            let (sw_type, sw_default) = vd.type_.as_ref().map_or(("Any".to_string(), "nil".to_string()), |t| swift_type_default(t));
+            let keyword = if vd.mutable { "var" } else { "let" };
             match &vd.initializer {
-                Some(init) => format!("{pad}var {}: {sw_type} = {}\n", vd.name, emit_swift_expr(init)),
-                None => format!("{pad}var {}: {sw_type} = {sw_default}\n", vd.name),
+                Some(init) => format!("{pad}{keyword} {}: {sw_type} = {}\n", vd.name, emit_swift_expr(init)),
+                None => format!("{pad}{keyword} {}: {sw_type} = {sw_default}\n", vd.name),
             }
         }
         Stmt::Assign(name, expr)  => format!("{pad}{name} = {}\n", emit_swift_expr(expr)),
         Stmt::Return(expr)        => format!("{pad}return {}\n", emit_swift_expr(expr)),
-        Stmt::Call(c)             => format!("{pad}{}({})\n", c.func, c.args.iter().map(|a| emit_swift_expr(a)).collect::<Vec<_>>().join(", ")),
-        Stmt::Wait(c)             => format!("{pad}await {}({})\n", c.func, c.args.iter().map(|a| emit_swift_expr(a)).collect::<Vec<_>>().join(", ")),
+        Stmt::Call(c)             => {
+            let mut parts: Vec<String> = c.args.iter().map(|a| emit_swift_expr(a)).collect();
+            for (k, v) in &c.named_args { parts.push(format!("{}: {}", k, emit_swift_expr(v))); }
+            format!("{pad}{}({})\n", c.func, parts.join(", "))
+        }
+        Stmt::Wait(c)             => {
+            let mut parts: Vec<String> = c.args.iter().map(|a| emit_swift_expr(a)).collect();
+            for (k, v) in &c.named_args { parts.push(format!("{}: {}", k, emit_swift_expr(v))); }
+            format!("{pad}await {}({})\n", c.func, parts.join(", "))
+        },
         Stmt::WaitFetch(fe)       => emit_swift_fetch(fe, indent),
         Stmt::If(cond, then, else_) => {
             let then_s: String = then.iter().map(|s| emit_swift_stmt(s, indent+1)).collect();
@@ -1862,10 +2307,16 @@ fn emit_swift_fetch(fe: &FetchExpr, indent: usize) -> String {
     let method = fe.method.to_uppercase();
     let then_code: String = fe.then_branch.iter().map(|s| emit_swift_stmt(s, indent + 2)).collect();
     let catch_code: String = fe.catch_branch.iter().map(|s| emit_swift_stmt(s, indent + 2)).collect();
+    // plan §1h — inject headers
+    let headers_code: String = fe.headers.iter()
+        .map(|(k, v)| format!("{pad}        request.setValue({}, forHTTPHeaderField: \"{}\")\n",
+            emit_swift_expr(v), k))
+        .collect();
     format!("{pad}Task {{\n\
              {pad}    do {{\n\
              {pad}        var request = URLRequest(url: URL(string: {url})!)\n\
              {pad}        request.httpMethod = \"{method}\"\n\
+             {headers_code}\
              {pad}        let (data, _) = try await URLSession.shared.data(for: request)\n\
              {then_code}\
              {pad}        await MainActor.run {{ /* update state */ }}\n\
@@ -1918,16 +2369,17 @@ fn ios_stack_alignment(a: &StackAlignment) -> &'static str {
 }
 
 /// Convert Frame FRType to a Swift type + default value.
-fn swift_type_default(t: &FRType) -> (&'static str, &'static str) {
+fn swift_type_default(t: &FRType) -> (String, String) {
     match t {
-        FRType::String_      => ("String", "\"\""),
-        FRType::Int          => ("Int", "0"),
-        FRType::Float        => ("Double", "0.0"),
-        FRType::Bool         => ("Bool", "false"),
+        FRType::String_      => ("String".into(), "\"\"".into()),
+        FRType::Int          => ("Int".into(), "0".into()),
+        FRType::Float        => ("Double".into(), "0.0".into()),
+        FRType::Bool         => ("Bool".into(), "false".into()),
         // object and list default to nil-able optionals so `= null` in .fr works
-        FRType::Object       => ("[String: Any]?", "nil"),
-        FRType::List         => ("[Any]?", "nil"),
-        FRType::Nullable(_)  => ("Any?", "nil"),
+        FRType::Object       => ("[String: Any]?".into(), "nil".into()),
+        FRType::List         => ("[Any]?".into(), "nil".into()),
+        FRType::Nullable(_)  => ("Any?".into(), "nil".into()),
+        FRType::Custom(name) => (name.clone(), "nil".into()),
     }
 }
 
@@ -2000,6 +2452,69 @@ struct {name}: Codable {{
             fields      = fields.join("\n"),
             coding_keys = coding_keys.join("\n"),
         ),
+    }
+}
+
+// ─── :enum → Swift enum ───────────────────────────────────────────────────────
+
+/// Generate a Swift `enum` for a `:enum` declaration (plan §1b).
+///
+/// Variants with values → `case name = "value"` (String raw value).
+/// Variants without values → `case name` (no raw value).
+pub fn gen_enum_swift(enum_def: &EnumDef) -> OutputFile {
+    let has_values = enum_def.variants.iter().any(|v| v.value.is_some());
+    let raw_value  = if has_values { ": String" } else { "" };
+
+    let cases: Vec<String> = enum_def.variants.iter().map(|v| {
+        let swift_name = to_lower_camel_case(&v.name);
+        match &v.value {
+            Some(val) => format!("    case {} = \"{}\"", swift_name, val),
+            None      => format!("    case {}", swift_name),
+        }
+    }).collect();
+
+    OutputFile {
+        path: format!("{}.swift", enum_def.name),
+        content: format!(
+"import Foundation\n\
+\n\
+/// {} — generated from :enum declaration in Frame source.\n\
+/// Do not edit manually; re-run `frame build` to regenerate.\n\
+enum {}{} {{\n\
+{}\n\
+}}\n",
+            enum_def.name,
+            enum_def.name,
+            raw_value,
+            cases.join("\n"),
+        ),
+    }
+}
+
+// ─── :type → Swift typealias ─────────────────────────────────────────────────
+
+/// Generate a Swift `typealias` for a `:type` alias declaration (plan §1c).
+pub fn gen_type_alias_swift(alias: &TypeAlias) -> OutputFile {
+    let (swift_t, _) = swift_type_default(&alias.target);
+    // strip trailing ? from nullable — typealias keeps base type readable
+    let base = swift_t.trim_end_matches('?');
+    OutputFile {
+        path: format!("{}.swift", alias.alias),
+        content: format!(
+"import Foundation\n\n\
+/// {} — generated from :type declaration. Do not edit manually.\n\
+typealias {} = {}\n",
+            alias.alias, alias.alias, base,
+        ),
+    }
+}
+
+/// Convert PascalCase variant name to lowerCamelCase for Swift convention.
+fn to_lower_camel_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None    => String::new(),
+        Some(f) => f.to_lowercase().collect::<String>() + chars.as_str(),
     }
 }
 
@@ -2089,21 +2604,21 @@ mod tests {
     #[test]
     fn test_info_plist_contains_camera_key_when_used() {
         let config = minimal_config();
-        let file = gen_info_plist(&config, true, false, false);
+        let file = gen_info_plist_full(&config, true, false, false, false, false, false, false, false, false, false, false, false, false);
         assert!(file.content.contains("NSCameraUsageDescription"));
     }
 
     #[test]
     fn test_info_plist_contains_location_key_when_used() {
         let config = minimal_config();
-        let file = gen_info_plist(&config, false, true, false);
+        let file = gen_info_plist_full(&config, false, false, true, false, false, false, false, false, false, false, false, false, false);
         assert!(file.content.contains("NSLocationWhenInUseUsageDescription"));
     }
 
     #[test]
     fn test_info_plist_contains_ats_when_http_used() {
         let config = minimal_config();
-        let file = gen_info_plist(&config, false, false, true);
+        let file = gen_info_plist_full(&config, false, false, false, false, false, false, false, false, false, false, false, false, true);
         assert!(file.content.contains("NSAppTransportSecurity"));
     }
 
@@ -2113,7 +2628,7 @@ mod tests {
         ast.functions.insert("capture".to_string(), Function {
             name: "capture".to_string(), is_async: false, params: vec![],
             return_type: None,
-            body: vec![Stmt::Call(CallExpr { func: "camera:capture".to_string(), args: vec![] })],
+            body: vec![Stmt::Call(CallExpr { func: "camera:capture".to_string(), args: vec![], named_args: vec![] })],
         });
         let files = gen_ios(&ast, &minimal_config());
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
@@ -2126,7 +2641,7 @@ mod tests {
         ast.functions.insert("getPos".to_string(), Function {
             name: "getPos".to_string(), is_async: false, params: vec![],
             return_type: None,
-            body: vec![Stmt::Call(CallExpr { func: "location:get".to_string(), args: vec![] })],
+            body: vec![Stmt::Call(CallExpr { func: "location:get".to_string(), args: vec![], named_args: vec![] })],
         });
         let files = gen_ios(&ast, &minimal_config());
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
@@ -2139,7 +2654,7 @@ mod tests {
         ast.functions.insert("notify".to_string(), Function {
             name: "notify".to_string(), is_async: false, params: vec![],
             return_type: None,
-            body: vec![Stmt::Call(CallExpr { func: "notification:send".to_string(), args: vec![] })],
+            body: vec![Stmt::Call(CallExpr { func: "notification:send".to_string(), args: vec![], named_args: vec![] })],
         });
         let files = gen_ios(&ast, &minimal_config());
         let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
@@ -2151,6 +2666,7 @@ mod tests {
         let expr = Expr::Call(CallExpr {
             func: "navigate".to_string(),
             args: vec![Expr::Literal(Value::Str("/home".to_string()))],
+            named_args: vec![],
         });
         let result = emit_swift_expr(&expr);
         assert!(result.contains("navigationController?.pushViewController"), "got: {result}");
@@ -2158,7 +2674,7 @@ mod tests {
 
     #[test]
     fn test_swift_expr_navigate_back_emits_pop() {
-        let expr = Expr::Call(CallExpr { func: "navigate_back".to_string(), args: vec![] });
+        let expr = Expr::Call(CallExpr { func: "navigate_back".to_string(), args: vec![], named_args: vec![] });
         let result = emit_swift_expr(&expr);
         assert_eq!(result, "navigationController?.popViewController(animated: true)");
     }
@@ -2313,26 +2829,67 @@ struct KeychainHelper {
     }
 }
 
-/// Generate a route helper that maps route strings to ViewControllers.
-/// Handles route params like /profile/:userId.
+// ─── FrameAppLifecycle.swift ──────────────────────────────────────────────────
+
+/// Generate the FrameAppLifecycle.swift file that wires :app {} hooks into
+/// the FrameAppLifecycle singleton declared in AppDelegate.
+fn gen_frame_app_lifecycle(ast: &AST) -> OutputFile {
+    let on_launch = ast.on_launch.as_ref()
+        .map(|f| format!("        FrameAppLifecycle.shared.onLaunchHandler     = {{ {f}() }}\n"))
+        .unwrap_or_default();
+    let on_fg = ast.on_foreground.as_ref()
+        .map(|f| format!("        FrameAppLifecycle.shared.onForegroundHandler = {{ {f}() }}\n"))
+        .unwrap_or_default();
+    let on_bg = ast.on_background.as_ref()
+        .map(|f| format!("        FrameAppLifecycle.shared.onBackgroundHandler = {{ {f}() }}\n"))
+        .unwrap_or_default();
+
+    OutputFile {
+        path: "FrameAppLifecycle.swift".to_string(),
+        content: format!(r#"// FrameAppLifecycle.swift — generated by Frame
+// Wires :app {{ }} lifecycle hooks into FrameAppLifecycle singleton.
+import UIKit
+
+/// Called once at startup from AppDelegate.application(_:didFinishLaunchingWithOptions:).
+func frameRegisterAppLifecycle() {{
+{on_launch}{on_fg}{on_bg}}}
+"#),
+    }
+}
+
+/// Generate RouteHelper.swift — maps route strings to typed ViewControllers.
+/// Also defines the FrameRoutable protocol used by NavigateBackTo.
 pub fn gen_route_helper(ast: &AST) -> OutputFile {
     let mut cases = String::new();
     for page in &ast.pages {
         let route = &page.route;
         let name  = &page.name;
-        let params: Vec<&str> = route.split('/').filter(|s| s.starts_with(':')).collect();
-        if params.is_empty() {
-            cases.push_str(&format!("        case \"{route}\":\n            return {name}ViewController()\n"));
+
+        // Use explicit page.params if declared, otherwise extract from route segments
+        let param_names: Vec<(String, String)> = if !page.params.is_empty() {
+            page.params.iter().map(|(n, t)| {
+                let (st, _) = swift_type_default(t);
+                (n.clone(), st)
+            }).collect()
         } else {
+            route.split('/').filter(|s| s.starts_with(':'))
+                .map(|s| (s.trim_start_matches(':').to_string(), "String".to_string()))
+                .collect()
+        };
+
+        if param_names.is_empty() {
+            cases.push_str(&format!(
+                "        case \"{route}\":\n            return {name}ViewController()\n"
+            ));
+        } else {
+            // Build a regex pattern for matching /profile/42 against /profile/:userId
             let pattern = route.split('/').map(|seg| {
-                if seg.starts_with(':') { "([^/]+)".to_string() } else { seg.to_string() }
+                if seg.starts_with(':') { "([^/]+)".to_string() } else { regex_escape(seg) }
             }).collect::<Vec<_>>().join("/");
-            let param_names: Vec<String> = params.iter()
-                .map(|p| p.trim_start_matches(':').to_string()).collect();
             let names_arr = param_names.iter()
-                .map(|p| format!("\"{}\"", p)).collect::<Vec<_>>().join(", ");
+                .map(|(p, _)| format!("\"{}\"", p)).collect::<Vec<_>>().join(", ");
             let vc_args = param_names.iter()
-                .map(|p| format!("{}: params[\"{}\"] ?? \"\"", p, p)).collect::<Vec<_>>().join(", ");
+                .map(|(p, _)| format!("{p}: params[\"{p}\"]")).collect::<Vec<_>>().join(", ");
             cases.push_str(&format!(
                 "        case let r where r.matches(regex: \"{pattern}\"):\n            let params = r.extractParams(pattern: \"{pattern}\", names: [{names_arr}])\n            return {name}ViewController({vc_args})\n"
             ));
@@ -2341,13 +2898,16 @@ pub fn gen_route_helper(ast: &AST) -> OutputFile {
 
     let mut content = String::new();
     content.push_str("import UIKit\n\n");
+    // Protocol that lets navigateBackTo find a VC by route
+    content.push_str("/// Protocol adopted by all generated ViewControllers so navigate_back_to() can find them.\n");
+    content.push_str("protocol FrameRoutable {\n    var frameRoute: String { get }\n}\n\n");
     content.push_str("extension String {\n");
     content.push_str("    func matches(regex pattern: String) -> Bool {\n");
-    content.push_str("        return range(of: pattern, options: .regularExpression) != nil\n");
+    content.push_str("        return range(of: \"^\\(pattern)$\", options: .regularExpression) != nil\n");
     content.push_str("    }\n");
     content.push_str("    func extractParams(pattern: String, names: [String]) -> [String: String] {\n");
     content.push_str("        var result = [String: String]()\n");
-    content.push_str("        guard let regex = try? NSRegularExpression(pattern: pattern),\n");
+    content.push_str("        guard let regex = try? NSRegularExpression(pattern: \"^\\(pattern)$\"),\n");
     content.push_str("              let match = regex.firstMatch(in: self, range: NSRange(self.startIndex..., in: self)) else { return result }\n");
     content.push_str("        for (i, name) in names.enumerated() {\n");
     content.push_str("            let range = match.range(at: i + 1)\n");
@@ -2363,6 +2923,16 @@ pub fn gen_route_helper(ast: &AST) -> OutputFile {
     content.push_str("    }\n}\n");
 
     OutputFile { path: "RouteHelper.swift".to_string(), content }
+}
+
+/// Escape a literal route segment so it's safe inside a regex pattern.
+fn regex_escape(s: &str) -> String {
+    s.chars().map(|c| match c {
+        '.' | '+' | '*' | '?' | '^' | '$' | '{' | '}' | '[' | ']' | '(' | ')' | '|' | '\\' => {
+            format!("\\{c}")
+        }
+        _ => c.to_string(),
+    }).collect()
 }
 
 // ─── Task 14: Overflow & Responsive helpers ───────────────────────────────────

@@ -4,10 +4,20 @@
 //! Property-based test suite: Task 21.
 
 use crate::parser::AST;
+use crate::cli::test_runner::{self, TestResult};
 
-/// Run all test suites found in an AST (thin wrapper over cli::test_runner).
-pub fn run_tests(_ast: &AST) {
-    println!("frame test — use `frame test` CLI command to run tests");
+/// Run all test suites found in an AST (delegates to cli::test_runner).
+pub fn run_tests(ast: &AST, filter: Option<&str>) -> Vec<TestResult> {
+    let mut all = Vec::new();
+    for suite in &ast.tests {
+        let results = test_runner::run_test_suite(suite, &[]);
+        if let Some(f) = filter {
+            all.extend(results.into_iter().filter(|r| r.name.contains(f)));
+        } else {
+            all.extend(results);
+        }
+    }
+    all
 }
 
 // ─── Integration tests ────────────────────────────────────────────────────────
@@ -51,7 +61,6 @@ mod tests {
     /// all 3 in one pass rather than stopping at the first error.
     #[test]
     fn test_collect_all_errors() {
-        use crate::parser::parse_project;
         use crate::cli::build::validate_config;
         use serde_json::json;
 

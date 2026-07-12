@@ -1,12 +1,27 @@
 :store UserStore {
-    user:       object = null
-    is_loading: bool   = false
-    error:      string = ""
+    :var user: object? = null
+    :var mut is_loading: bool = false
+    :var mut error: string = ""
 
     fn load: async (id: string) => {
-        UserStore.is_loading = true
-        UserStore.error = ""
-        UserStore.user = wait:fetch("/api/users/$id", { method: "GET" })
-        UserStore.is_loading = false
+        is_loading = true
+        error = ""
+        try {
+            :var result = wait:fetch("/api/users/$id", {
+                method: "GET"
+                headers: {
+                    Authorization: "Bearer $token"
+                    Content-Type: "application/json"
+                }
+            })
+            if result != null {
+                user = result
+            } else {
+                error = "User not found"
+            }
+        } catch (err) {
+            error = err
+        }
+        is_loading = false
     }
 }

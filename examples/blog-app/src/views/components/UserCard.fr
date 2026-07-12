@@ -1,7 +1,10 @@
+import { text, column } "frame-core"
+
 component UserCard: {
     props: {
         name:  string = ""
         email: string = ""
+        bio:   string = ""
     }
     styles: {
         border_radius: 8dp
@@ -14,12 +17,16 @@ component UserCard: {
             styles: { gap: 4dp }
             children: [
                 text: {
-                    content: $name
+                    content: name
                     styles: { font_size: 16sp  font_weight: "bold" }
                 }
                 text: {
-                    content: $email
+                    content: email
                     styles: { font_size: 14sp }
+                }
+                text: {
+                    content: bio
+                    styles: { font_size: 14sp  font_style: "italic" }
                 }
             ]
         }

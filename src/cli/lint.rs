@@ -864,7 +864,7 @@ mod tests {
                     ..Default::default()
                 })],
                 catch_param: "e".to_string(),
-                catch_body: vec![Stmt::Call(CallExpr { func: "print".to_string(), args: vec![] })],
+                catch_body: vec![Stmt::Call(CallExpr { func: "print".to_string(), args: vec![], named_args: vec![] })],
                 finally_body: None,
             }],
         });

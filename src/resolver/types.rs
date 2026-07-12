@@ -1,8 +1,8 @@
 //! Type checker for the Frame AST.
 
 use crate::parser::{AST, FrameError, ErrorCategory, Function, Stmt};
-use crate::parser::ast::{Expr, FRType, OverflowValue, Value, ComponentNode, VarDecl};
-use std::collections::HashMap;
+use crate::parser::ast::{Expr, FRType, OverflowValue, Value, ComponentNode};
+use std::collections::{HashMap, HashSet};
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -14,7 +14,11 @@ pub fn type_check(ast: &AST) -> Vec<FrameError> {
     check_async_wait_enforcement(ast, &mut errors);
     check_prop_types(ast, &mut errors);
     check_var_types(ast, &mut errors);
+    check_user_type_refs(ast, &mut errors);
     check_overflow_list_warning(ast, &mut errors);
+
+    // Pass 6: Validation schema references
+    errors.extend(crate::compiler::check_validations(ast));
 
     errors
 }
@@ -330,45 +334,82 @@ fn check_list_overflow_node(node: &ComponentNode, errors: &mut Vec<FrameError>) 
 fn check_var_types(ast: &AST, errors: &mut Vec<FrameError>) {
     for func in ast.functions.values() {
         let mut scope = HashMap::new();
-        check_stmts(&func.body, &mut scope, errors);
+        let mut mutable_vars = HashSet::new();
+        check_stmts(&func.body, &mut scope, &mut mutable_vars, errors);
     }
     for store in ast.stores.values() {
         for action in store.actions.values() {
             let mut scope = HashMap::new();
-            check_stmts(&action.body, &mut scope, errors);
+            let mut mutable_vars = HashSet::new();
+            check_stmts(&action.body, &mut scope, &mut mutable_vars, errors);
         }
     }
     for comp in ast.components.values() {
         for func in comp.functions.values() {
             let mut scope = HashMap::new();
-            check_stmts(&func.body, &mut scope, errors);
+            let mut mutable_vars = HashSet::new();
+            check_stmts(&func.body, &mut scope, &mut mutable_vars, errors);
         }
     }
 }
 
-fn check_stmts(stmts: &[Stmt], scope: &mut HashMap<String, FRType>, errors: &mut Vec<FrameError>) {
+fn check_stmts(stmts: &[Stmt], scope: &mut HashMap<String, FRType>, mutable_vars: &mut HashSet<String>, errors: &mut Vec<FrameError>) {
     for stmt in stmts {
         match stmt {
             Stmt::VarDecl(vd) => {
-                if let Some(init) = &vd.initializer {
-                    if let Some(actual) = infer_literal_type(init, scope) {
-                        if !types_compatible(&actual, &vd.type_) {
-                            errors.push(FrameError {
-                                category: ErrorCategory::TypeMismatchError,
-                                file: "<project>".to_string(),
-                                line: 0,
-                                column: 0,
-                                message: format!(
-                                    "Type mismatch: '{}' declared as {} but initializer is {}",
-                                    vd.name, frtype_name(&vd.type_), frtype_name(&actual)
-                                ),
-                            });
+                let resolved = if let Some(ann) = &vd.type_ {
+                    // Check initializer against annotation
+                    if let Some(init) = &vd.initializer {
+                        if let Some(actual) = infer_literal_type(init, scope) {
+                            if !types_compatible(&actual, ann) {
+                                errors.push(FrameError {
+                                    category: ErrorCategory::TypeMismatchError,
+                                    file: "<project>".to_string(),
+                                    line: 0,
+                                    column: 0,
+                                    message: format!(
+                                        "Type mismatch: '{}' declared as {} but initializer is {}",
+                                        vd.name, frtype_name(ann), frtype_name(&actual)
+                                    ),
+                                });
+                            }
                         }
                     }
+                    ann.clone()
+                } else if let Some(init) = &vd.initializer {
+                    // No type annotation — infer from initializer
+                    infer_literal_type(init, scope).unwrap_or(FRType::String_)
+                } else {
+                    errors.push(FrameError {
+                        category: ErrorCategory::TypeMismatchError,
+                        file: "<project>".to_string(),
+                        line: 0,
+                        column: 0,
+                        message: format!(
+                            "'{}' requires a type annotation or an initializer",
+                            vd.name
+                        ),
+                    });
+                    FRType::String_
+                };
+                if vd.mutable {
+                    mutable_vars.insert(vd.name.clone());
                 }
-                scope.insert(vd.name.clone(), vd.type_.clone());
+                scope.insert(vd.name.clone(), resolved);
             }
             Stmt::Assign(name, expr) => {
+                if !name.contains('.') && !mutable_vars.contains(name) {
+                    errors.push(FrameError {
+                        category: ErrorCategory::TypeMismatchError,
+                        file: "<project>".to_string(),
+                        line: 0,
+                        column: 0,
+                        message: format!(
+                            "Cannot assign to immutable variable '{}'. Use ':var mut' to declare mutable variables",
+                            name
+                        ),
+                    });
+                }
                 if let Some(expected) = scope.get(name) {
                     if let Some(actual) = infer_literal_type(expr, scope) {
                         if !types_compatible(&actual, expected) {
@@ -388,31 +429,86 @@ fn check_stmts(stmts: &[Stmt], scope: &mut HashMap<String, FRType>, errors: &mut
             }
             Stmt::If(_, then_body, else_body) => {
                 let mut then_scope = scope.clone();
-                check_stmts(then_body, &mut then_scope, errors);
+                let mut then_mut = mutable_vars.clone();
+                check_stmts(then_body, &mut then_scope, &mut then_mut, errors);
                 if let Some(else_stmts) = else_body {
                     let mut else_scope = scope.clone();
-                    check_stmts(else_stmts, &mut else_scope, errors);
+                    let mut else_mut = mutable_vars.clone();
+                    check_stmts(else_stmts, &mut else_scope, &mut else_mut, errors);
                 }
             }
             Stmt::For(_, _, body) => {
-                check_stmts(body, scope, errors);
+                check_stmts(body, scope, mutable_vars, errors);
             }
             Stmt::Switch(_, cases) => {
                 for (_, body) in cases {
                     let mut case_scope = scope.clone();
-                    check_stmts(body, &mut case_scope, errors);
+                    let mut case_mut = mutable_vars.clone();
+                    check_stmts(body, &mut case_scope, &mut case_mut, errors);
                 }
             }
             Stmt::TryCatch { body, catch_body, finally_body, .. } => {
-                check_stmts(body, scope, errors);
+                check_stmts(body, scope, mutable_vars, errors);
                 let mut catch_scope = scope.clone();
+                let mut catch_mut = mutable_vars.clone();
                 catch_scope.insert("err".to_string(), FRType::String_);
-                check_stmts(catch_body, &mut catch_scope, errors);
+                check_stmts(catch_body, &mut catch_scope, &mut catch_mut, errors);
                 if let Some(fb) = finally_body {
-                    check_stmts(fb, scope, errors);
+                    check_stmts(fb, scope, mutable_vars, errors);
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Check that all user-defined type annotations (`:enum`, `:type`, `:obj`) exist.
+fn check_user_type_refs(ast: &AST, errors: &mut Vec<FrameError>) {
+    for func in ast.functions.values() {
+        for stmt in &func.body {
+            check_stmt_for_user_types(stmt, ast, errors);
+        }
+    }
+    for store in ast.stores.values() {
+        for action in store.actions.values() {
+            for stmt in &action.body {
+                check_stmt_for_user_types(stmt, ast, errors);
+            }
+        }
+    }
+    for comp in ast.components.values() {
+        for func in comp.functions.values() {
+            for stmt in &func.body {
+                check_stmt_for_user_types(stmt, ast, errors);
+            }
+        }
+    }
+}
+
+fn check_stmt_for_user_types(stmt: &Stmt, ast: &AST, errors: &mut Vec<FrameError>) {
+    match stmt {
+        Stmt::VarDecl(vd) => {
+            if let Some(t) = &vd.type_ {
+                validate_type_ref(t, ast, errors);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_type_ref(t: &FRType, ast: &AST, errors: &mut Vec<FrameError>) {
+    if let FRType::Custom(name) = t {
+        if !ast.enums.contains_key(name)
+            && !ast.type_aliases.contains_key(name)
+            && !ast.objects.contains_key(name)
+        {
+            errors.push(FrameError {
+                category: ErrorCategory::TypeMismatchError,
+                file: "<project>".to_string(),
+                line: 0,
+                column: 0,
+                message: format!("Unknown type '{}': not a built-in type, :enum, :type, or :obj", name),
+            });
         }
     }
 }
@@ -446,15 +542,16 @@ fn types_compatible(actual: &FRType, expected: &FRType) -> bool {
     false
 }
 
-fn frtype_name(t: &FRType) -> &'static str {
+fn frtype_name(t: &FRType) -> String {
     match t {
-        FRType::String_ => "string",
-        FRType::Int => "int",
-        FRType::Float => "float",
-        FRType::Bool => "bool",
-        FRType::Object => "object",
-        FRType::List => "list",
-        FRType::Nullable(_) => "nullable",
+        FRType::String_ => "string".into(),
+        FRType::Int => "int".into(),
+        FRType::Float => "float".into(),
+        FRType::Bool => "bool".into(),
+        FRType::Object => "object".into(),
+        FRType::List => "list".into(),
+        FRType::Nullable(_) => "nullable".into(),
+        FRType::Custom(name) => name.clone(),
     }
 }
 
@@ -642,6 +739,7 @@ mod tests {
                 body: vec![Stmt::Call(CallExpr {
                     func: "fetchData".to_string(),
                     args: vec![],
+                    named_args: vec![],
                 })],
             },
         );
@@ -668,6 +766,7 @@ mod tests {
                 body: vec![Stmt::Wait(CallExpr {
                     func: "someOtherFn".to_string(),
                     args: vec![],
+                    named_args: vec![],
                 })],
             },
         );
@@ -860,7 +959,7 @@ mod tests {
     fn test_var_decl_int_init_ok() {
         let mut ast = AST::default();
         ast.functions.insert("test".to_string(), make_fn("test", vec![
-            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: Some(Expr::Literal(Value::Int(42))) }),
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: Some(FRType::Int), initializer: Some(Expr::Literal(Value::Int(42))) }),
         ]));
         let errs = type_check(&ast);
         assert!(errs.is_empty(), "Expected no errors, got: {:?}", errs);
@@ -870,7 +969,7 @@ mod tests {
     fn test_var_decl_no_init_ok() {
         let mut ast = AST::default();
         ast.functions.insert("test".to_string(), make_fn("test", vec![
-            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::String_, initializer: None }),
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: Some(FRType::String_), initializer: None }),
         ]));
         let errs = type_check(&ast);
         assert!(errs.is_empty(), "Expected no errors, got: {:?}", errs);
@@ -880,7 +979,7 @@ mod tests {
     fn test_var_decl_type_mismatch_string_to_int() {
         let mut ast = AST::default();
         ast.functions.insert("test".to_string(), make_fn("test", vec![
-            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: Some(Expr::Literal(Value::Str("hello".to_string()))) }),
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: Some(FRType::Int), initializer: Some(Expr::Literal(Value::Str("hello".to_string()))) }),
         ]));
         let errs = type_check(&ast);
         assert!(errs.iter().any(|e| e.message.contains("Type mismatch")), "Expected Type mismatch error, got: {:?}", errs);
@@ -890,7 +989,7 @@ mod tests {
     fn test_var_decl_int_to_float_ok() {
         let mut ast = AST::default();
         ast.functions.insert("test".to_string(), make_fn("test", vec![
-            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Float, initializer: Some(Expr::Literal(Value::Int(42))) }),
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: Some(FRType::Float), initializer: Some(Expr::Literal(Value::Int(42))) }),
         ]));
         let errs = type_check(&ast);
         assert!(errs.is_empty(), "Expected no errors (int→float widening), got: {:?}", errs);
@@ -900,7 +999,7 @@ mod tests {
     fn test_assign_type_mismatch_after_decl() {
         let mut ast = AST::default();
         ast.functions.insert("test".to_string(), make_fn("test", vec![
-            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: None }),
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: true, type_: Some(FRType::Int), initializer: None }),
             Stmt::Assign("x".to_string(), Expr::Literal(Value::Str("bad".to_string()))),
         ]));
         let errs = type_check(&ast);
@@ -911,10 +1010,54 @@ mod tests {
     fn test_assign_same_type_ok() {
         let mut ast = AST::default();
         ast.functions.insert("test".to_string(), make_fn("test", vec![
-            Stmt::VarDecl(VarDecl { name: "x".to_string(), type_: FRType::Int, initializer: None }),
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: true, type_: Some(FRType::Int), initializer: None }),
             Stmt::Assign("x".to_string(), Expr::Literal(Value::Int(99))),
         ]));
         let errs = type_check(&ast);
         assert!(errs.is_empty(), "Expected no errors, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_var_decl_type_inferred_from_init() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: true, type_: None, initializer: Some(Expr::Literal(Value::Int(42))) }),
+            Stmt::Assign("x".to_string(), Expr::Literal(Value::Int(99))),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.is_empty(), "Expected no errors (type inferred as Int), got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_var_decl_no_type_no_init_error() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: None, initializer: None }),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.iter().any(|e| e.message.contains("requires a type annotation")), "Expected error about missing type, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_assign_to_immutable_var_error() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: Some(FRType::Int), initializer: None }),
+            Stmt::Assign("x".to_string(), Expr::Literal(Value::Int(99))),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.iter().any(|e| e.message.contains("Cannot assign to immutable variable")),
+            "Expected immutability error, got: {:?}", errs);
+    }
+
+    #[test]
+    fn test_unknown_custom_type_error() {
+        let mut ast = AST::default();
+        ast.functions.insert("test".to_string(), make_fn("test", vec![
+            Stmt::VarDecl(VarDecl { name: "x".to_string(), mutable: false, type_: Some(FRType::Custom("NonExistentType".to_string())), initializer: None }),
+        ]));
+        let errs = type_check(&ast);
+        assert!(errs.iter().any(|e| e.message.contains("Unknown type")),
+            "Expected unknown type error, got: {:?}", errs);
     }
 }

@@ -12,6 +12,7 @@ use crate::parser::{FrameError, ErrorCategory};
 const CONTAINER_KINDS: &[&str] = &[
     "container", "row", "column", "card", "scaffold", "form", "modal", "banner",
     "accordion", "timeline", "tab_bar", "bottom_sheet",
+    "app_bar", "sidebar",
 ];
 
 /// Scroll components default to `overflow: scroll_y`.
@@ -26,7 +27,7 @@ const VISIBLE_KINDS: &[&str] = &[
     "color_picker", "rating", "otp_input", "avatar", "chip", "tag", "badge",
     "skeleton", "toast", "tooltip",
     "video_player", "audio_player", "lottie", "web_view", "map_view",
-    "camera_view", "qr_scanner",
+    "camera_view", "qr_scanner", "floating_action_button",
     "swipeable", "draggable", "long_press",
 ];
 

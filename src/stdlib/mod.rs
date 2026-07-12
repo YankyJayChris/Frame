@@ -22,6 +22,133 @@ pub fn inject(ast: AST) -> AST {
     ast
 }
 
+/// Translate a dotted stdlib function call (e.g. `util.print`, `log.info`, `string.upper`)
+/// into the platform-native equivalent, substituting already-emitted arguments.
+///
+/// Returns `None` if the function is not a known stdlib function.
+pub fn translate_stdlib_call(func: &str, args: &[String], platform: &str) -> Option<String> {
+    let is_android = platform == "android";
+    match func {
+        // ── String methods ────────────────────────────────────────────────
+        "string.upper"       => Some(if is_android { format!("{}.uppercase()", args.first()?) } else { format!("{}.uppercased()", args.first()?) }),
+        "string.lower"       => Some(if is_android { format!("{}.lowercase()", args.first()?) } else { format!("{}.lowercased()", args.first()?) }),
+        "string.trim"        => Some(if is_android { format!("{}.trim()", args.first()?) } else { format!("{}.trimmingCharacters(in: .whitespaces)", args.first()?) }),
+        "string.contains"    => Some(if is_android { format!("{}.contains({})", args.first()?, args.get(1)?) } else { format!("{}.contains({})", args.first()?, args.get(1)?) }),
+        "string.starts_with" => Some(if is_android { format!("{}.startsWith({})", args.first()?, args.get(1)?) } else { format!("{}.hasPrefix({})", args.first()?, args.get(1)?) }),
+        "string.ends_with"   => Some(if is_android { format!("{}.endsWith({})", args.first()?, args.get(1)?) } else { format!("{}.hasSuffix({})", args.first()?, args.get(1)?) }),
+        "string.replace"     => Some(if is_android { format!("{}.replaceFirst({}, {})", args.first()?, args.get(1)?, args.get(2)?) } else { format!("{}.replacingOccurrences(of: {}, with: {})", args.first()?, args.get(1)?, args.get(2)?) }),
+        "string.replace_all" => Some(if is_android { format!("{}.replace({}, {})", args.first()?, args.get(1)?, args.get(2)?) } else { format!("{}.replacingOccurrences(of: {}, with: {})", args.first()?, args.get(1)?, args.get(2)?) }),
+        "string.split"       => Some(if is_android { format!("{}.split({})", args.first()?, args.get(1)?) } else { format!("{}.components(separatedBy: {})", args.first()?, args.get(1)?) }),
+        "string.join"        => Some(if is_android { format!("{}.joinToString({})", args.first()?, args.get(1)?) } else { format!("{}.joined(separator: {})", args.first()?, args.get(1)?) }),
+        "string.slice"       => Some(if is_android { format!("{}.substring({}, {})", args.first()?, args.get(1)?, args.get(2)?) } else { format!("String({}.prefix({})).dropFirst({})", args.first()?, args.get(2)?, args.get(1)?) }),
+        "string.index_of"    => Some(if is_android { format!("{}.indexOf({})", args.first()?, args.get(1)?) } else { format!("{}.range(of: {})", args.first()?, args.get(1)?) }),
+        "string.is_empty"    => Some(if is_android { format!("{}.isEmpty()", args.first()?) } else { format!("{}.isEmpty", args.first()?) }),
+        "string.repeat"      => Some(if is_android { format!("{}.repeat({})", args.first()?, args.get(1)?) } else { format!("String(repeating: {}, count: {})", args.first()?, args.get(1)?) }),
+        "string.pad_left"    => Some(if is_android { format!("{}.padStart({}, {})", args.first()?, args.get(1)?, args.get(2)?) } else { format!("padLeft({}, {}, {})", args.first()?, args.get(1)?, args.get(2)?) }),
+        "string.pad_right"   => Some(if is_android { format!("{}.padEnd({}, {})", args.first()?, args.get(1)?, args.get(2)?) } else { format!("padRight({}, {}, {})", args.first()?, args.get(1)?, args.get(2)?) }),
+        "string.to_int"      => Some(if is_android { format!("{}.toInt()!!", args.first()?) } else { format!("Int({})!", args.first()?) }),
+        "string.to_float"    => Some(if is_android { format!("{}.toDouble()!!", args.first()?) } else { format!("Double({})!", args.first()?) }),
+        "string.to_bool"     => Some(if is_android { format!("{}.toBooleanStrict()", args.first()?) } else { format!("Bool({})!", args.first()?) }),
+        "string.length"      => Some(if is_android { format!("{}.length", args.first()?) } else { format!("{}.count", args.first()?) }),
+
+        // ── Number functions ───────────────────────────────────────────────
+        "number.abs"         => Some(if is_android { format!("Math.abs({})", args.first()?) } else { format!("abs({})", args.first()?) }),
+        "number.sqrt"        => Some(if is_android { format!("Math.sqrt({}.toDouble())", args.first()?) } else { format!("sqrt({})", args.first()?) }),
+        "number.floor"       => Some(if is_android { format!("kotlin.math.floor({})", args.first()?) } else { format!("floor({})", args.first()?) }),
+        "number.ceil"        => Some(if is_android { format!("kotlin.math.ceil({})", args.first()?) } else { format!("ceil({})", args.first()?) }),
+        "number.round"       => Some(if is_android { format!("kotlin.math.round({})", args.first()?) } else { format!("round({})", args.first()?) }),
+        "number.min"         => Some(if is_android { format!("Math.min({}, {})", args.first()?, args.get(1)?) } else { format!("min({}, {})", args.first()?, args.get(1)?) }),
+        "number.max"         => Some(if is_android { format!("Math.max({}, {})", args.first()?, args.get(1)?) } else { format!("max({}, {})", args.first()?, args.get(1)?) }),
+        "number.random"      => Some(if is_android { "Math.random()".into() } else { "Double.random(in: 0..<1)".into() }),
+        "number.clamp"       => Some(if is_android { format!("{}.coerceIn({}, {})", args.first()?, args.get(1)?, args.get(2)?) } else { format!("min(max({}, {}), {})", args.first()?, args.get(1)?, args.get(2)?) }),
+
+        // ── List / collection methods ──────────────────────────────────────
+        "list.length"        => Some(if is_android { format!("{}.size", args.first()?) } else { format!("{}.count", args.first()?) }),
+        "list.push"          => Some(if is_android { format!("{}.add({})", args.first()?, args.get(1)?) } else { format!("{}.append({})", args.first()?, args.get(1)?) }),
+        "list.pop"           => Some(if is_android { format!("{}.removeAt({}.size - 1)", args.first()?, args.first()?) } else { format!("{}.removeLast()", args.first()?) }),
+        "list.remove_at"     => Some(if is_android { format!("{}.removeAt({})", args.first()?, args.get(1)?) } else { format!("{}.remove(at: {})", args.first()?, args.get(1)?) }),
+        "list.contains"      => Some(if is_android { format!("{}.contains({})", args.first()?, args.get(1)?) } else { format!("{}.contains({})", args.first()?, args.get(1)?) }),
+        "list.is_empty"      => Some(if is_android { format!("{}.isEmpty()", args.first()?) } else { format!("{}.isEmpty", args.first()?) }),
+        "list.first"         => Some(if is_android { format!("{}.first()", args.first()?) } else { format!("{}.first!", args.first()?) }),
+        "list.last"          => Some(if is_android { format!("{}.last()", args.first()?) } else { format!("{}.last!", args.first()?) }),
+        "list.at"            => Some(if is_android { format!("{}[{}]", args.first()?, args.get(1)?) } else { format!("{}[{}]", args.first()?, args.get(1)?) }),
+        "list.reverse"       => Some(if is_android { format!("{}.reversed()", args.first()?) } else { format!("{}.reversed()", args.first()?) }),
+        "list.sort"          => Some(if is_android { format!("{}.sorted()", args.first()?) } else { format!("{}.sorted()", args.first()?) }),
+        "list.sum"           => Some(if is_android { format!("{}.sum()", args.first()?) } else { format!("{}.reduce(0, +)", args.first()?) }),
+        "list.average"       => Some(if is_android { format!("{}.average()", args.first()?) } else { format!("Double({}.reduce(0, +)) / Double({}.count)", args.first()?, args.first()?) }),
+
+        // ── Math functions ─────────────────────────────────────────────────
+        "math.abs"           => Some(if is_android { format!("Math.abs({})", args.first()?) } else { format!("abs({})", args.first()?) }),
+        "math.sqrt"          => Some(if is_android { format!("Math.sqrt({})", args.first()?) } else { format!("sqrt({})", args.first()?) }),
+        "math.sin"           => Some(if is_android { format!("Math.sin({})", args.first()?) } else { format!("sin({})", args.first()?) }),
+        "math.cos"           => Some(if is_android { format!("Math.cos({})", args.first()?) } else { format!("cos({})", args.first()?) }),
+        "math.tan"           => Some(if is_android { format!("Math.tan({})", args.first()?) } else { format!("tan({})", args.first()?) }),
+        "math.pi"            => Some(if is_android { "Math.PI".into() } else { "Double.pi".into() }),
+        "math.e"             => Some(if is_android { "Math.E".into() } else { "M_E".into() }),
+        "math.pow"           => Some(if is_android { format!("Math.pow({}, {})", args.first()?, args.get(1)?) } else { format!("pow({}, {})", args.first()?, args.get(1)?) }),
+        "math.log"           => Some(if is_android { format!("Math.log({})", args.first()?) } else { format!("log({})", args.first()?) }),
+        "math.log10"         => Some(if is_android { format!("Math.log10({})", args.first()?) } else { format!("log10({})", args.first()?) }),
+
+        // ── Date/time functions ────────────────────────────────────────────
+        "date.now"           => Some(if is_android { "System.currentTimeMillis()".into() } else { "Date().timeIntervalSince1970".into() }),
+        "date.from_timestamp" => Some(if is_android { format!("Date({})", args.first()?) } else { format!("Date(timeIntervalSince1970: {})", args.first()?) }),
+        "date.format"        => Some(if is_android { format!("SimpleDateFormat({}).format(this)", args.first()?) } else { format!("DateFormatter().string(from: {})", args.first()?) }),
+        "date.diff"          => Some(if is_android { format!("ChronoUnit.DAYS.between(this, {})", args.first()?) } else { format!("Calendar.current.dateComponents([.day], from: this, to: {}).day!", args.first()?) }),
+
+        // ── Utility functions ──────────────────────────────────────────────
+        "util.type_of"       => Some(if is_android { format!("{}::class.simpleName", args.first()?) } else { format!("type(of: {})", args.first()?) }),
+        "util.is_null"       => Some(if is_android { format!("{} == null", args.first()?) } else { format!("{} == nil", args.first()?) }),
+        "util.is_not_null"   => Some(if is_android { format!("{} != null", args.first()?) } else { format!("{} != nil", args.first()?) }),
+        "util.print"         => Some(if is_android { format!("println({})", args.first()?) } else { format!("print({})", args.first()?) }),
+        "util.assert"        => Some(if is_android { format!("assert({})", args.first()?) } else { format!("assert({})", args.first()?) }),
+        "util.uuid"          => Some(if is_android { "UUID.randomUUID().toString()".into() } else { "UUID().uuidString".into() }),
+        "util.hash"          => Some(if is_android { format!("{}.hashCode().toString()", args.first()?) } else { format!("String({}.hashValue)", args.first()?) }),
+        "util.encode_base64" => Some(if is_android { format!("Base64.getEncoder().encodeToString({}.toByteArray())", args.first()?) } else { format!("Data({}.utf8).base64EncodedString()", args.first()?) }),
+        "util.decode_base64" => Some(if is_android { format!("String(Base64.getDecoder().decode({}))", args.first()?) } else { format!("String(data: Data(base64Encoded: {})!, encoding: .utf8)!", args.first()?) }),
+        "util.encode_url"    => Some(if is_android { format!("URLEncoder.encode({}, \"UTF-8\")", args.first()?) } else { format!("{}.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!", args.first()?) }),
+        "util.decode_url"    => Some(if is_android { format!("URLDecoder.decode({}, \"UTF-8\")", args.first()?) } else { format!("{}.removingPercentEncoding!", args.first()?) }),
+
+        // ── Object / Map functions ─────────────────────────────────────────
+        "object.keys"        => Some(if is_android { format!("{}.keys.toList()", args.first()?) } else { format!("Array({}.keys)", args.first()?) }),
+        "object.values"      => Some(if is_android { format!("{}.values.toList()", args.first()?) } else { format!("Array({}.values)", args.first()?) }),
+        "object.has_key"     => Some(if is_android { format!("{}.containsKey({})", args.first()?, args.get(1)?) } else { format!("{}.keys.contains({})", args.first()?, args.get(1)?) }),
+
+        // ── JSON ───────────────────────────────────────────────────────────
+        "from_json"          => Some(if is_android { format!("Gson().fromJson({}, Map::class.java)", args.first()?) } else { format!("try! JSONSerialization.jsonObject(with: {}.data(using: .utf8)!) as! [String: Any]", args.first()?) }),
+        "to_json"            => Some(if is_android { format!("Gson().toJson({})", args.first()?) } else { format!("String(data: try! JSONSerialization.data(withJSONObject: {}), encoding: .utf8)!", args.first()?) }),
+
+        // ── Logging ────────────────────────────────────────────────────────
+        "log.info"           => Some(if is_android {
+            format!("android.util.Log.i(\"Frame\", {})", args.first()?)
+        } else {
+            format!("os_log(.info, \"{{}}\", {})", args.first()?)
+        }),
+        "log.warn"           => Some(if is_android {
+            format!("android.util.Log.w(\"Frame\", {})", args.first()?)
+        } else {
+            format!("os_log(.default, \"{{}}\", {})", args.first()?)
+        }),
+        "log.error"          => Some(if is_android {
+            format!("android.util.Log.e(\"Frame\", {})", args.first()?)
+        } else {
+            format!("os_log(.error, \"{{}}\", {})", args.first()?)
+        }),
+        "log.debug"          => Some(if is_android {
+            format!("android.util.Log.d(\"Frame\", {})", args.first()?)
+        } else {
+            format!("os_log(.debug, \"{{}}\", {})", args.first()?)
+        }),
+        "log.verbose"        => Some(if is_android {
+            format!("android.util.Log.v(\"Frame\", {})", args.first()?)
+        } else {
+            format!("os_log(.debug, \"{{}}\", {})", args.first()?)
+        }),
+
+        // Unknown
+        _ => None,
+    }
+}
+
 /// Emit a platform-specific code fragment for a stdlib call.
 ///
 /// # Arguments
@@ -149,6 +276,13 @@ pub fn emit_stdlib_call(call: &str, platform: &str) -> String {
         } else {
             "Calendar.current.dateComponents([.day],from:self,to:other).day!".into()
         },
+
+        // ── Logging ────────────────────────────────────────────────────────
+        "log.info"    => if is_android { "android.util.Log.i(\"Frame\", x)".into() } else { "os_log(.info, \"{x}\")".into() },
+        "log.warn"    => if is_android { "android.util.Log.w(\"Frame\", x)".into() } else { "os_log(.default, \"{x}\")".into() },
+        "log.error"   => if is_android { "android.util.Log.e(\"Frame\", x)".into() } else { "os_log(.error, \"{x}\")".into() },
+        "log.debug"   => if is_android { "android.util.Log.d(\"Frame\", x)".into() } else { "os_log(.debug, \"{x}\")".into() },
+        "log.verbose" => if is_android { "android.util.Log.v(\"Frame\", x)".into() } else { "os_log(.debug, \"{x}\")".into() },
 
         // ── Utility functions ──────────────────────────────────────────────
         "util.type_of"      => if is_android { "x::class.simpleName".into() } else { "type(of:x)".into() },
@@ -570,5 +704,72 @@ mod tests {
     fn test_emit_list_filter_with_args() {
         let result = emit_stdlib_call("list.filter(p)", "ios");
         assert_eq!(result, ".filter{p($0)}");
+    }
+
+    // ── Logging functions (translate_stdlib_call) ─────────────────────────
+    #[test]
+    fn test_log_info_android() {
+        let result = translate_stdlib_call("log.info", &["\"hello\"".to_string()], "android");
+        assert_eq!(result, Some("android.util.Log.i(\"Frame\", \"hello\")".into()));
+    }
+    #[test]
+    fn test_log_info_ios() {
+        let result = translate_stdlib_call("log.info", &["\"hello\"".to_string()], "ios");
+        assert_eq!(result, Some("os_log(.info, \"{}\", \"hello\")".into()));
+    }
+    #[test]
+    fn test_log_warn_android() {
+        let result = translate_stdlib_call("log.warn", &["\"warning\"".to_string()], "android");
+        assert_eq!(result, Some("android.util.Log.w(\"Frame\", \"warning\")".into()));
+    }
+    #[test]
+    fn test_log_warn_ios() {
+        let result = translate_stdlib_call("log.warn", &["\"warning\"".to_string()], "ios");
+        assert_eq!(result, Some("os_log(.default, \"{}\", \"warning\")".into()));
+    }
+    #[test]
+    fn test_log_error_android() {
+        let result = translate_stdlib_call("log.error", &["\"error\"".to_string()], "android");
+        assert_eq!(result, Some("android.util.Log.e(\"Frame\", \"error\")".into()));
+    }
+    #[test]
+    fn test_log_error_ios() {
+        let result = translate_stdlib_call("log.error", &["\"error\"".to_string()], "ios");
+        assert_eq!(result, Some("os_log(.error, \"{}\", \"error\")".into()));
+    }
+    #[test]
+    fn test_util_print_translate_android() {
+        let result = translate_stdlib_call("util.print", &["\"hello\"".to_string()], "android");
+        assert_eq!(result, Some("println(\"hello\")".into()));
+    }
+    #[test]
+    fn test_util_print_translate_ios() {
+        let result = translate_stdlib_call("util.print", &["\"hello\"".to_string()], "ios");
+        assert_eq!(result, Some("print(\"hello\")".into()));
+    }
+    #[test]
+    fn test_string_upper_translate_android() {
+        let result = translate_stdlib_call("string.upper", &["myStr".to_string()], "android");
+        assert_eq!(result, Some("myStr.uppercase()".into()));
+    }
+    #[test]
+    fn test_string_upper_translate_ios() {
+        let result = translate_stdlib_call("string.upper", &["myStr".to_string()], "ios");
+        assert_eq!(result, Some("myStr.uppercased()".into()));
+    }
+    #[test]
+    fn test_unknown_translate_returns_none() {
+        let result = translate_stdlib_call("foo.bar", &["x".to_string()], "android");
+        assert_eq!(result, None);
+    }
+    #[test]
+    fn test_log_debug_android() {
+        let result = translate_stdlib_call("log.debug", &["\"dbg\"".to_string()], "android");
+        assert_eq!(result, Some("android.util.Log.d(\"Frame\", \"dbg\")".into()));
+    }
+    #[test]
+    fn test_log_verbose_android() {
+        let result = translate_stdlib_call("log.verbose", &["\"v\"".to_string()], "android");
+        assert_eq!(result, Some("android.util.Log.v(\"Frame\", \"v\")".into()));
     }
 }

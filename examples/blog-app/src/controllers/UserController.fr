@@ -1,11 +1,5 @@
+import { UserStore } "../models/UserStore.fr"
+
 fn loadUser: async (id: string) => {
-    result = wait:fetch("/api/users/$id", { method: "GET" })
-}
-
-fn saveUser: async (user: object) => {
-    wait:fetch("/api/users", { method: "POST"  body: { user: user } })
-}
-
-fn deleteUser: async (id: string) => {
-    wait:fetch("/api/users/$id", { method: "DELETE" })
+    wait:UserStore.load(id)
 }

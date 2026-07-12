@@ -87,6 +87,15 @@ pub fn print(ast: &AST) -> String {
         out.push('\n');
     }
 
+    // :app lifecycle block (only emitted when at least one hook is declared)
+    if ast.on_launch.is_some() || ast.on_foreground.is_some() || ast.on_background.is_some() {
+        out.push_str(":app {\n");
+        if let Some(f) = &ast.on_launch     { out.push_str(&format!("    on_launch:     {f}\n")); }
+        if let Some(f) = &ast.on_foreground { out.push_str(&format!("    on_foreground: {f}\n")); }
+        if let Some(f) = &ast.on_background { out.push_str(&format!("    on_background: {f}\n")); }
+        out.push_str("}\n\n");
+    }
+
     // pages
     for page in &ast.pages {
         out.push_str(&print_page(page));
@@ -327,8 +336,13 @@ fn print_function(func: &Function, base_indent: usize) -> String {
     out
 }
 
-fn print_fn_params(params: &[(String, FRType)]) -> String {
-    params.iter().map(|(name, t)| format!("{}: {}", name, print_type(t))).collect::<Vec<_>>().join(", ")
+fn print_fn_params(params: &[(String, FRType, Option<Expr>)]) -> String {
+    params.iter().map(|(name, t, default)| {
+        match default {
+            Some(d) => format!("{}: {} = {}", name, print_type(t), print_expr(d)),
+            None    => format!("{}: {}", name, print_type(t)),
+        }
+    }).collect::<Vec<_>>().join(", ")
 }
 
 fn print_type(t: &FRType) -> String {
@@ -340,6 +354,7 @@ fn print_type(t: &FRType) -> String {
         FRType::Object        => "object".to_string(),
         FRType::List          => "list".to_string(),
         FRType::Nullable(inner) => format!("{}?", print_type(inner)),
+        FRType::Custom(name) => name.clone(),
     }
 }
 
@@ -349,11 +364,30 @@ fn print_page(page: &Page) -> String {
     let mut out = String::from("page: {\n");
     out.push_str(&format!("    name: \"{}\"\n", page.name));
     out.push_str(&format!("    route: \"{}\"\n", page.route));
+    if !page.params.is_empty() {
+        out.push_str("    params: {\n");
+        for (name, type_) in &page.params {
+            out.push_str(&format!("        {}: {}\n", name, print_type(type_)));
+        }
+        out.push_str("    }\n");
+    }
     if let Some(be) = &page.before_enter {
-        out.push_str(&format!("    before_enter: \"{}\"\n", be));
+        out.push_str(&format!("    before_enter: {}\n", print_expr(be)));
     }
     if let Some(bl) = &page.before_leave {
-        out.push_str(&format!("    before_leave: \"{}\"\n", bl));
+        out.push_str(&format!("    before_leave: {}\n", print_expr(bl)));
+    }
+    if let Some(om) = &page.on_mount {
+        out.push_str(&format!("    on_mount: {}\n", print_expr(om)));
+    }
+    if let Some(ou) = &page.on_unmount {
+        out.push_str(&format!("    on_unmount: {}\n", print_expr(ou)));
+    }
+    if let Some(of_) = &page.on_foreground {
+        out.push_str(&format!("    on_foreground: {}\n", print_expr(of_)));
+    }
+    if let Some(ob) = &page.on_background {
+        out.push_str(&format!("    on_background: {}\n", print_expr(ob)));
     }
     // styles
     let styles_str = print_styles(&page.styles, 1);
@@ -603,6 +637,9 @@ fn print_styles(s: &Styles, indent: usize) -> String {
     if let Some(v) = s.visible {
         lines.push_str(&format!("{}visible: {}\n", pad, v));
     }
+    if let Some(v) = s.safe_area {
+        lines.push_str(&format!("{}safe_area: {}\n", pad, v));
+    }
 
     // overflow — skip default (Visible)
     if s.overflow != OverflowValue::Visible {
@@ -741,6 +778,7 @@ fn print_event_map(events: &EventMap, indent: usize) -> String {
     emit_event!(events.on_touch_end,   "on_touch_end");
     emit_event!(events.on_mount,       "on_mount");
     emit_event!(events.on_update,      "on_update");
+    emit_event!(events.watch,          "watch");
     emit_event!(events.on_unmount,     "on_unmount");
     out
 }
@@ -823,6 +861,33 @@ pub fn print_expr(expr: &Expr) -> String {
             }
             format!("({}) => {{{}}}", params_str, body_str)
         }
+        Expr::Interpolated(segments) => {
+            use crate::parser::ast::InterpolatedSegment;
+            let inner: String = segments.iter().map(|seg| match seg {
+                InterpolatedSegment::Literal(s) => s.clone(),
+                InterpolatedSegment::Expr(e)    => format!("\\({})", print_expr(e)),
+            }).collect();
+            format!("\"{}\"", inner)
+        }
+        // ── Navigation expressions ─────────────────────────────────────────
+        Expr::Navigate(route, opts) => {
+            let r = print_expr(route);
+            let mut parts: Vec<String> = Vec::new();
+            if opts.replace     { parts.push("replace: true".to_string()); }
+            if opts.clear_stack { parts.push("clear_stack: true".to_string()); }
+            if opts.single_top  { parts.push("single_top: true".to_string()); }
+            if let Some(t) = &opts.transition { parts.push(format!("transition: \"{}\"", t)); }
+            if parts.is_empty() {
+                format!("navigate({})", r)
+            } else {
+                format!("navigate({}, {})", r, parts.join(", "))
+            }
+        }
+        Expr::NavigateReplace(route)  => format!("navigate_replace({})", print_expr(route)),
+        Expr::NavigateBack            => "navigate_back()".to_string(),
+        Expr::NavigateBackTo(route)   => format!("navigate_back_to({})", print_expr(route)),
+        Expr::NavigateModal(route)    => format!("navigate_modal({})", print_expr(route)),
+        Expr::NavigateDismiss         => "navigate_dismiss()".to_string(),
     }
 }
 
@@ -849,8 +914,11 @@ fn print_value(v: &Value) -> String {
 }
 
 fn print_call_expr(ce: &CallExpr) -> String {
-    let args_str = ce.args.iter().map(print_expr).collect::<Vec<_>>().join(", ");
-    // navigate and navigate_back use bare parens
+    let mut parts: Vec<String> = ce.args.iter().map(print_expr).collect();
+    for (k, v) in &ce.named_args {
+        parts.push(format!("{}: {}", k, print_expr(v)));
+    }
+    let args_str = parts.join(", ");
     if ce.func == "navigate" || ce.func == "navigate_back" {
         format!("{}({})", ce.func, args_str)
     } else if ce.func.starts_with("wait:") {
@@ -885,10 +953,11 @@ fn print_stmt(stmt: &Stmt, indent: usize) -> String {
     let pad = "    ".repeat(indent);
     match stmt {
         Stmt::VarDecl(vd) => {
-            let type_str = print_type(&vd.type_);
+            let mut_str = if vd.mutable { "mut " } else { "" };
+            let type_part = vd.type_.as_ref().map_or_else(String::new, |t| format!(": {}", print_type(t)));
             match &vd.initializer {
-                Some(init) => format!("{}:var {}: {} = {}\n", pad, vd.name, type_str, print_expr(init)),
-                None => format!("{}:var {}: {}\n", pad, vd.name, type_str),
+                Some(init) => format!("{}:var {}{} = {}\n", pad, mut_str, vd.name, print_expr(init)),
+                None => format!("{}:var {}{}{}\n", pad, mut_str, vd.name, type_part),
             }
         }
         Stmt::Assign(name, expr) => {
@@ -1259,7 +1328,7 @@ mod tests {
         ast.functions.insert("greet".to_string(), Function {
             name: "greet".to_string(),
             is_async: false,
-            params: vec![("name".to_string(), FRType::String_)],
+            params: vec![("name".to_string(), FRType::String_, None)],
             return_type: None,
             body: vec![
                 Stmt::Assign("x".to_string(), Expr::Var("name".to_string())),
