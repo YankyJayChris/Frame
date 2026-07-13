@@ -27,6 +27,10 @@ sha2 = "0.10"              # SHA-256 hashing for incremental cache
 notify = "6.1"             # File watching for --watch flag
 clap = { version = "4.5", features = ["derive"] }   # CLI argument parsing
 proptest = "1.6"           # Property-based testing
+tower-lsp = "0.20"         # LSP server framework
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # Logging for LSP
+lsp-types = "0.94"         # LSP type definitions (must match tower-lsp)
+tracing = "0.1"            # Logging facade
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"               # Android native plugins

@@ -48,6 +48,7 @@
 - [Icon System](#icon-system)
 - [Plugin System](#plugin-system)
 - [CLI Reference](#cli-reference)
+- [IDE Support](#ide-support)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
 - [License](#license)
@@ -2898,6 +2899,8 @@ my-plugin/
 | `frame plugin list` | List installed plugins |
 | `frame plugin create <name>` | Scaffold a new plugin |
 | `frame init-examples` | Regenerate example projects |
+| `frame lsp` | Start the Language Server Protocol server (used by VS Code extension) |
+| `frame lsp --workspace-root <dir>` | Start LSP server with explicit project root |
 
 ### `frame.config.json`
 
@@ -2910,6 +2913,9 @@ my-plugin/
   "render_mode": "native",
   "min_android_sdk": 24,
   "min_ios": "16.0",
+  "paths": {
+    "@": "./src"
+  },
   "plugins": {
     "frame_camera": "0.1.0",
     "frame_storage": "0.1.0",
@@ -2918,32 +2924,101 @@ my-plugin/
 }
 ```
 
+| Field | Description |
+|-------|-------------|
+| `name` | Project name, used as the app display name |
+| `bundle_id` | Unique app identifier (reverse-domain, e.g. `com.example.myapp`) |
+| `version` | Semantic version string |
+| `build_number` | Incremental build number for app stores |
+| `render_mode` | Rendering engine: `native` (default) or `experimental_skia` |
+| `min_android_sdk` | Minimum Android API level (default 24) |
+| `min_ios` | Minimum iOS version (default `16.0`) |
+| `paths` | Path alias mapping — `"@": "./src"` enables `@/components/MyComponent` imports |
+| `plugins` | Plugin dependencies with version constraints |
+
+The `paths` field enables the `@/` path alias. When set to `"./src"`, you can write:
+```
+import { MyComponent } "@/components/MyComponent"
+```
+This resolves to `<project_root>/src/components/MyComponent.fr`. The alias root is resolved relative to the project root (the directory containing `frame.config.json`).
+
+---
+
+## IDE Support
+
+Frame ships with a built-in Language Server Protocol (LSP) server and a VS Code extension for a rich editing experience.
+
+### LSP Server (`frame lsp`)
+
+The `frame lsp` subcommand starts an LSP server that communicates over stdio. It's automatically launched by the VS Code extension and provides:
+
+| Feature | Description |
+|---------|-------------|
+| **Diagnostics** | Real-time error reporting from the parser, type checker, and linter — red squiggles for syntax errors, yellow for warnings |
+| **Completions** | 25+ context-aware completion contexts — component names inside `children: [...]`, props after component kind, style property names, store fields, events, icons, routes, and more |
+| **Hover Info** | Documentation for built-in components (props, events, style props, category), function signatures, store fields/actions, style properties |
+| **Go-to Definition** | Jump to component declarations, store definitions, function definitions, page declarations, object/enum types, imports |
+| **Find References** | Find all usages of a symbol across the project |
+| **Document Symbols** | Outline view showing pages, components, stores, objects, enums, functions with their children |
+| **Workspace Symbols** | Search for any symbol across the entire project |
+| **Code Actions** | Quick fixes for common issues — missing required props, naming convention violations |
+| **Formatting** | Auto-indent with tabs, consistent spacing, trailing newline |
+| **Folding Ranges** | Collapsible regions for blocks, arrays, comments |
+| **Semantic Tokens** | AST-driven syntax highlighting for keywords, types, strings, numbers, comments |
+| **Rename Symbol** | Rename components, stores, functions, and variables across the file |
+| **Document Highlights** | Highlight all occurrences of the symbol at the cursor |
+| **Document Colors** | Color picker for hex color values (`#FF0000`, `#FF0`, `$primary`) |
+
+### VS Code Extension
+
+The `frame-syntax` VS Code extension provides:
+
+- **Full LSP integration** — all features above are available via `frame lsp`
+- **Auto-import** — detects unimported PascalCase components in `children: [...]` and offers to add the `import` statement automatically, with `@/` path alias support
+- **Icon browser** — browse all 330+ bundled icons by category, with SF Symbol and Material Icon mappings
+- **Frame Explorer** — tree view showing pages, components, stores, functions, icons by category, and quick action buttons
+- **18 VS Code commands** — build, test, deploy, lint, scaffold, plugin management, icon management, and more
+- **Status bar indicators** — diagnostic counts, build status, LSP connection status
+- **Decorations** — color swatches beside hex values, dimmed unit suffixes on dimensions
+- **Supplementary completions** — icon names, CSS colors, file paths, page routes
+- **TextMate grammar** — syntax highlighting for all 71+ built-in components, keywords, style properties, events, test matchers
+- **90+ code snippets** — every component, declaration, control flow pattern, and testing construct
+
+**Installation:** Install from the VS Code marketplace or package manually:
+```bash
+cd frame-syntax
+npm install -g @vscode/vsce
+vsce package
+# Install the generated .vsix in VS Code
+```
+
 ---
 
 ## Architecture
 
 ```
 .fr files  ──→  PEG Parser  ──→  AST  ──→  Resolver  ──→  Type Checker  ──→  Codegen
-                    │                                                   │
-                    │                                                   ├── Android (Kotlin/Compose)
-               Component Registry                                       │
-               (65+ components)                                         └── iOS (UIKit/Swift)
-                    │                                                       │
-               Plugin Registry                                              │
-                    │                                                   Validation Files
-               Icon Bundle System                                      (native validators)
-                    │
-               Stdlib Translator
+                    │                   │                                    │
+                    │                   │                                    ├── Android (Kotlin/Compose)
+               Component Registry    LSP Server                              │
+               (65+ components)     (frame lsp)                              └── iOS (UIKit/Swift)
+                    │                   │                                        │
+               Plugin Registry     VS Code Extension                       Validation Files
+                    │              (frame-syntax)                          (native validators)
+               Icon Bundle System                                                 │
+                    │                                                   frame.config.json
+               Stdlib Translator                                         (@/ paths config)
 ```
 
 ### Pipeline
 
-1. **Parser** — PEG grammar (`grammar.pest`) produces a typed AST from `.fr` source files
-2. **Resolver** — Validates imports, resolves component references, validates routes
+1. **Parser** — PEG grammar (`grammar.pest`) produces a typed AST from `.fr` source files. Also consumed by the LSP server for real-time diagnostics.
+2. **Resolver** — Validates imports, resolves component references, validates routes. Supports `@/` path aliases configured via `frame.config.json`.
 3. **Type Checker** — Enforces strict type system, validates props and styles against the registry
 4. **Codegen** — Generates platform-native code:
    - **iOS**: Swift with UIKit views, Auto Layout constraints, UINavigationController routing
    - **Android**: Kotlin with Jetpack Compose, NavHost routing, Material Design theming
+5. **LSP Server** — Built into the `frame` CLI as `frame lsp`. Reuses the parser, resolver, type checker, and linter to provide IDE features to the VS Code extension.
 
 ### Key Design Decisions
 
@@ -2952,6 +3027,9 @@ my-plugin/
 - **Platform-native icons**: Maps to SF Symbols (iOS) and Material Icons (Android) — no custom icon font needed
 - **Bundle-based icon system**: `.frameicons` files provide cross-platform icon definitions alongside custom SVG support
 - **Plugin architecture**: Native code modules with Frame DSL bindings, permission management, and asset distribution
+- **Built-in LSP server**: `frame lsp` provides diagnostics, completions, hover, go-to-definition, formatting, and more — no separate binary needed
+- **@/ path aliases**: Configurable import path resolution via `frame.config.json`'s `paths` field
+- **Integrated VS Code extension**: `frame-syntax` provides syntax highlighting, snippets, and full LSP client — install once and get a complete IDE experience
 
 ---
 

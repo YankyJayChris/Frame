@@ -583,5 +583,432 @@
       "}"
     ],
     "description": "Define validation rules"
+  },
+  "Accordion": {
+    "prefix": "accordion",
+    "body": [
+      "accordion: {",
+      "\theader: \"${1:Section Title}\"",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add an accordion with expandable content"
+  },
+  "Timeline": {
+    "prefix": "timeline",
+    "body": [
+      "timeline: {",
+      "\tchildren: [",
+      "\t\titem: { content: \"${1:Event 1}\" }",
+      "\t\titem: { content: \"${2:Event 2}\" }",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a timeline event list"
+  },
+  "Table": {
+    "prefix": "table",
+    "body": [
+      "table: {",
+      "\tcolumns: [",
+      "\t\t{ header: \"${1:Column 1}\" }",
+      "\t\t{ header: \"${2:Column 2}\" }",
+      "\t]",
+      "\trows: [",
+      "\t\t{ cells: [\"${3:value1}\", \"${4:value2}\"] }",
+      "\t\t${5}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a data table with columns and rows"
+  },
+  "VideoPlayer": {
+    "prefix": "video_player",
+    "body": [
+      "video_player: {",
+      "\tsrc: \"${1:path/to/video}\"",
+      "\tcontrols: ${2:true}",
+      "\tstyles: { width: 100%  height: ${3:300} }",
+      "}"
+    ],
+    "description": "Add a video player with controls"
+  },
+  "AudioPlayer": {
+    "prefix": "audio_player",
+    "body": [
+      "audio_player: {",
+      "\tsrc: \"${1:path/to/audio}\"",
+      "}"
+    ],
+    "description": "Add an audio player"
+  },
+  "Lottie": {
+    "prefix": "lottie",
+    "body": [
+      "lottie: {",
+      "\tsrc: \"${1:path/to/animation.json}\"",
+      "\tloop: ${2:true}",
+      "\tstyles: { width: ${3:200}  height: ${4:200} }",
+      "}"
+    ],
+    "description": "Add a Lottie animation"
+  },
+  "Swipeable": {
+    "prefix": "swipeable",
+    "body": [
+      "swipeable: {",
+      "\ton_swipe: (${1:direction}) => {",
+      "\t\t${2}",
+      "\t}",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a swipeable gesture wrapper"
+  },
+  "Draggable": {
+    "prefix": "draggable",
+    "body": [
+      "draggable: {",
+      "\ton_drag: (${1:details}) => {",
+      "\t\t${2}",
+      "\t}",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a draggable gesture wrapper"
+  },
+  "Refresh": {
+    "prefix": "refresh",
+    "body": [
+      "refresh: {",
+      "\ton_refresh: () => {",
+      "\t\t${1}",
+      "\t}",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a pull-to-refresh container"
+  },
+  "LongPress": {
+    "prefix": "long_press",
+    "body": [
+      "long_press: {",
+      "\ton_long_press: () => {",
+      "\t\t${1}",
+      "\t}",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a long press gesture handler"
+  },
+  "OtpInput": {
+    "prefix": "otp_input",
+    "body": [
+      "otp_input: {",
+      "\tlength: ${1:6}",
+      "\ton_change: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add an OTP/PIN code input"
+  },
+  "ColorPicker": {
+    "prefix": "color_picker",
+    "body": [
+      "color_picker: {",
+      "\tvalue: \"${1:#000000}\"",
+      "\ton_change: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add a color picker"
+  },
+  "DatePicker": {
+    "prefix": "date_picker",
+    "body": [
+      "date_picker: {",
+      "\tvalue: \"${1:2024-01-01}\"",
+      "\ton_change: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add a date picker"
+  },
+  "TimePicker": {
+    "prefix": "time_picker",
+    "body": [
+      "time_picker: {",
+      "\tvalue: \"${1:12:00}\"",
+      "\ton_change: ${2:handler}()",
+      "}"
+    ],
+    "description": "Add a time picker"
+  },
+  "TextArea": {
+    "prefix": "text_area",
+    "body": [
+      "text_area: {",
+      "\tvalue: ${1:value}",
+      "\tplaceholder: \"${2:Enter text}\"",
+      "\tstyles: { height: ${3:120} }",
+      "\ton_change: ${4:handler}()",
+      "}"
+    ],
+    "description": "Add a multi-line text area"
+  },
+  "Banner": {
+    "prefix": "banner",
+    "body": [
+      "banner: {",
+      "\tmessage: \"${1:Important message}\"",
+      "\ttype: \"${2|info,warning,error,success|}\"",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add an info banner with message"
+  },
+  "Tooltip": {
+    "prefix": "tooltip",
+    "body": [
+      "tooltip: {",
+      "\tcontent: \"${1:Tooltip text}\"",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add a tooltip with content"
+  },
+  "Animate": {
+    "prefix": "animate:",
+    "body": [
+      "animate: {",
+      "\tproperty: \"${1:opacity}\"",
+      "\tfrom: ${2:0}",
+      "\tto: ${3:1}",
+      "\tduration: ${4:300}ms",
+      "\tcurve: \"${5:ease_in_out}\"",
+      "}"
+    ],
+    "description": "Add an animation block with property, from, to, and duration"
+  },
+  "Positioned": {
+    "prefix": "positioned:",
+    "body": [
+      "positioned: {",
+      "\ttop: ${1:0}",
+      "\tleft: ${2:0}",
+      "\tchildren: [",
+      "\t\t${3}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add absolute positioning within a stack"
+  },
+  "ShowIf": {
+    "prefix": "show_if:",
+    "body": [
+      "show_if: {",
+      "\tcondition: ${1:true}",
+      "\tchildren: [",
+      "\t\t${2}",
+      "\t]",
+      "}"
+    ],
+    "description": "Add conditional display"
+  },
+  "State": {
+    "prefix": "state:",
+    "body": [
+      "state: {",
+      "\t:var mut ${1:field}: ${2:string} = ${3:\"\"}",
+      "\t${4}",
+      "}"
+    ],
+    "description": "Add a page/component state declaration"
+  },
+  "Describe": {
+    "prefix": "describe:",
+    "body": [
+      "describe: \"${1:Test suite}\" {",
+      "\tit: \"${2:should behave}\" {",
+      "\t\t${3}",
+      "\t}",
+      "}"
+    ],
+    "description": "Add a test suite structure with describe/it blocks"
+  },
+  "It": {
+    "prefix": "it:",
+    "body": [
+      "it: \"${1:should behave}\" {",
+      "\t${2}",
+      "}"
+    ],
+    "description": "Add a test case block"
+  },
+  "Expect": {
+    "prefix": "expect:",
+    "body": [
+      "expect: ${1:value}.${2|toBe,toEqual,toContain,toBeNull,toBeTrue,toBeFalse,toThrow|}(${3})"
+    ],
+    "description": "Add a test assertion with matcher"
+  },
+  "Mock": {
+    "prefix": "mock:",
+    "body": [
+      "mock: {",
+      "\tmethod: \"${1|GET,POST,PUT,DELETE|}\"",
+      "\turl: \"${2:/api/endpoint}\"",
+      "\tresponse: {",
+      "\t\tstatus: ${3:200}",
+      "\t\tbody: { ${4} }",
+      "\t}",
+      "}"
+    ],
+    "description": "Add an HTTP mock for testing"
+  },
+  "Type": {
+    "prefix": [":type", "type"],
+    "body": [
+      ":type ${1:Name} = ${2:string}"
+    ],
+    "description": "Define a type alias"
+  },
+  "App": {
+    "prefix": [":app", "app"],
+    "body": [
+      ":app {",
+      "\ton_launch: () => {",
+      "\t\t${1}",
+      "\t}",
+      "}"
+    ],
+    "description": "Define app lifecycle with on_launch handler"
+  },
+  "Persist": {
+    "prefix": "persist:",
+    "body": [
+      "persist: {",
+      "\tsecure: ${1:false}",
+      "\tlocal: ${2:true}",
+      "\tkeys: [\"${3:field}\"]",
+      "}"
+    ],
+    "description": "Add store persistence configuration"
+  },
+  "Build": {
+    "prefix": "build:",
+    "body": [
+      "build: (${1:item}, ${2:index}) => {",
+      "\ttext: { content: ${1:item} }",
+      "}"
+    ],
+    "description": "Add a list/grid builder function"
+  },
+  "Data": {
+    "prefix": "data:",
+    "body": [
+      "data: ${1:href(\"/api/data\")}",
+      "",
+      "build: (${2:item}) => {",
+      "\t${3}",
+      "}"
+    ],
+    "description": "Add data binding with remote source"
+  },
+  "Watch": {
+    "prefix": "watch:",
+    "body": [
+      "watch: ${1:StoreName.field}",
+      "",
+      "on_change: (${2:value}) => {",
+      "\t${3}",
+      "}"
+    ],
+    "description": "Watch a store field for changes"
+  },
+  "FetchWithHandlers": {
+    "prefix": "wait:fetch",
+    "body": [
+      "wait:fetch(\"${1:url}\", {",
+      "\tmethod: \"${2|GET,POST,PUT,DELETE|}\"",
+      "\theaders: {",
+      "\t\t\"Content-Type\": \"application/json\"",
+      "\t\t${3}",
+      "\t}",
+      "\tbody: ${4:null}",
+      "}).then((${5:res}) => {",
+      "\t${6}",
+      "}).catch((${7:err}) => {",
+      "\t${8}",
+      "})"
+    ],
+    "description": "Add an HTTP request with then/catch handlers"
+  },
+  "Plugin": {
+    "prefix": "plugin:",
+    "body": [
+      "plugin: ${1:Name} {",
+      "\t${2}",
+      "}"
+    ],
+    "description": "Add a plugin component node"
+  },
+  "NavigateWithOptions": {
+    "prefix": ["navigate_opts", "navigate_to"],
+    "body": [
+      "navigate(\"${1:/route}\", {",
+      "\tanimate: ${2:true}",
+      "\treplace: ${3:false}",
+      "})"
+    ],
+    "description": "Navigate to another page with animation options"
+  },
+  "BottomNavBar": {
+    "prefix": "bottom_nav_bar",
+    "body": [
+      "bottom_nav_bar: {",
+      "\titems: [",
+      "\t\t{ icon: \"${1:home}\", label: \"${2:Home}\" }",
+      "\t\t{ icon: \"${3:search}\", label: \"${4:Search}\" }",
+      "\t\t{ icon: \"${5:settings}\", label: \"${6:Settings}\" }",
+      "\t]",
+      "\ton_select: ${7:handler}()",
+      "}"
+    ],
+    "description": "Add a bottom navigation bar with items"
+  },
+  "CameraView": {
+    "prefix": "camera_view",
+    "body": [
+      "camera_view: {",
+      "\tdirection: \"${1|back,front|}\"",
+      "\tstyles: { width: 100%  height: ${2:400} }",
+      "}"
+    ],
+    "description": "Add a camera preview"
+  },
+  "QrScanner": {
+    "prefix": "qr_scanner",
+    "body": [
+      "qr_scanner: {",
+      "\ton_scan: (${1:result}) => {",
+      "\t\t${2}",
+      "\t}",
+      "\tstyles: { width: ${3:250}  height: ${4:250} }",
+      "}"
+    ],
+    "description": "Add a QR code scanner"
   }
 }

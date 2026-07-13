@@ -197,7 +197,7 @@ fn print_diagnostics(diags: &[LintDiagnostic]) {
 
 // ─── NAMING rules ─────────────────────────────────────────────────────────────
 
-fn lint_naming(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
+pub(crate) fn lint_naming(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
     // FR001 — component names must be PascalCase
     if cfg.should_run("FR001") {
         for name in ast.components.keys() {
@@ -247,7 +247,7 @@ fn lint_naming(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
 
 // ─── STYLE rules ──────────────────────────────────────────────────────────────
 
-fn lint_style(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
+pub(crate) fn lint_style(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
     // FR010 — bare hex color literals in styles should use :vars
     if cfg.should_run("FR010") {
         for page in &ast.pages {
@@ -347,7 +347,7 @@ fn check_nodes_for_missing_key(nodes: &[ComponentNode], out: &mut Vec<LintDiagno
 
 // ─── COMPLEXITY rules ─────────────────────────────────────────────────────────
 
-fn lint_complexity(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
+pub(crate) fn lint_complexity(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
     const MAX_DEPTH: usize = 8;
     const MAX_CHILDREN: usize = 25;
 
@@ -415,7 +415,7 @@ fn total_node_count(nodes: &[ComponentNode]) -> usize {
 
 // ─── PERFORMANCE rules ────────────────────────────────────────────────────────
 
-fn lint_performance(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
+pub(crate) fn lint_performance(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
     let all_nodes = collect_all_nodes(ast);
 
     for node in &all_nodes {
@@ -454,7 +454,7 @@ fn lint_performance(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) 
 
 // ─── BEST PRACTICE rules ──────────────────────────────────────────────────────
 
-fn lint_best_practice(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
+pub(crate) fn lint_best_practice(ast: &AST, cfg: &LintConfig, out: &mut Vec<LintDiagnostic>) {
     // FR040 — async fn with wait:fetch but no try/catch
     if cfg.should_run("FR040") {
         let all_fns = collect_all_functions(ast);

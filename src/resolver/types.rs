@@ -562,9 +562,14 @@ mod tests {
     use super::*;
     use crate::parser::ast::*;
     use crate::resolver::resolve;
+    use std::path::Path;
 
     fn empty_ast() -> AST {
         AST::default()
+    }
+
+    fn project_root() -> &'static Path {
+        Path::new(".")
     }
 
     // ── 1. ParseError: valid empty AST doesn't crash ──────────────────────────
@@ -623,7 +628,7 @@ mod tests {
             names: vec![("FakeWidget".to_string(), None)],
             path: "frame-core".to_string(),
         });
-        let result = resolve(ast);
+        let result = resolve(ast, project_root());
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(errs
@@ -688,7 +693,7 @@ mod tests {
         }];
         ast.components.insert("CompB".to_string(), comp_b);
 
-        let result = resolve(ast);
+        let result = resolve(ast, project_root());
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(errs
@@ -705,7 +710,7 @@ mod tests {
             names: vec![("text".to_string(), None), ("button".to_string(), None)],
             path: "frame-core".to_string(),
         });
-        let result = resolve(ast);
+        let result = resolve(ast, project_root());
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
     }
 

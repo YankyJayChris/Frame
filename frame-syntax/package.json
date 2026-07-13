@@ -10,24 +10,264 @@
   },
   "categories": [
     "Programming Languages",
-    "Snippets"
+    "Snippets",
+    "Linters",
+    "Other"
   ],
   "icon": "icon.png",
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:frame",
+    "onCommand:frame.build",
+    "onCommand:frame.buildWatch",
+    "onCommand:frame.test",
+    "onCommand:frame.testFilter",
+    "onCommand:frame.deploy",
+    "onCommand:frame.lint",
+    "onCommand:frame.lintFile",
+    "onCommand:frame.pluginAdd",
+    "onCommand:frame.pluginList",
+    "onCommand:frame.iconList",
+    "onCommand:frame.iconGenerate",
+    "onCommand:frame.newPage",
+    "onCommand:frame.newComponent",
+    "onCommand:frame.newStore",
+    "onCommand:frame.openDocs",
+    "onCommand:frame.restartLsp",
+    "onCommand:frame.showIcons",
+    "onView:frameExplorer"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/vscode": "^1.125.0",
+    "typescript": "^5.9.3"
+  },
   "contributes": {
-    "languages": [{
-      "id": "frame",
-      "aliases": ["Frame", "frame"],
-      "extensions": [".fr"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "frame",
-      "scopeName": "source.frame",
-      "path": "./syntaxes/frame.tmLanguage.json"
-    }],
-    "snippets": [{
-      "language": "frame",
-      "path": "./snippets/frame.code-snippets"
-    }]
+    "languages": [
+      {
+        "id": "frame",
+        "aliases": [
+          "Frame",
+          "frame"
+        ],
+        "extensions": [
+          ".fr"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "frame",
+        "scopeName": "source.frame",
+        "path": "./syntaxes/frame.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "frame",
+        "path": "./snippets/frame.code-snippets"
+      }
+    ],
+    "commands": [
+      {
+        "command": "frame.build",
+        "title": "Frame: Build Project"
+      },
+      {
+        "command": "frame.buildWatch",
+        "title": "Frame: Build & Watch"
+      },
+      {
+        "command": "frame.test",
+        "title": "Frame: Run Tests"
+      },
+      {
+        "command": "frame.testFilter",
+        "title": "Frame: Run Test (Filter)"
+      },
+      {
+        "command": "frame.deploy",
+        "title": "Frame: Deploy App"
+      },
+      {
+        "command": "frame.lint",
+        "title": "Frame: Lint Project"
+      },
+      {
+        "command": "frame.lintFile",
+        "title": "Frame: Lint Current File"
+      },
+      {
+        "command": "frame.pluginAdd",
+        "title": "Frame: Add Plugin"
+      },
+      {
+        "command": "frame.pluginList",
+        "title": "Frame: List Plugins"
+      },
+      {
+        "command": "frame.iconList",
+        "title": "Frame: List Icons"
+      },
+      {
+        "command": "frame.iconGenerate",
+        "title": "Frame: Generate Icons"
+      },
+      {
+        "command": "frame.newPage",
+        "title": "Frame: New Page"
+      },
+      {
+        "command": "frame.newComponent",
+        "title": "Frame: New Component"
+      },
+      {
+        "command": "frame.newStore",
+        "title": "Frame: New Store"
+      },
+      {
+        "command": "frame.openDocs",
+        "title": "Frame: Open Documentation"
+      },
+      {
+        "command": "frame.restartLsp",
+        "title": "Frame: Restart Language Server"
+      },
+      {
+        "command": "frame.showIcons",
+        "title": "Frame: Browse Icons"
+      },
+      {
+        "command": "frameExplorer.refresh",
+        "title": "Frame: Refresh Explorer"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "frame.build",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.buildWatch",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.test",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.testFilter",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.deploy",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.lint",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.lintFile",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.pluginAdd",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.pluginList",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.iconList",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.iconGenerate",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.newPage",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.newComponent",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.newStore",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.openDocs",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.restartLsp",
+          "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.showIcons",
+          "when": "editorLangId == frame"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "frame.lintFile",
+          "group": "Frame",
+          "when": "editorLangId == frame"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "frame.lintFile",
+          "group": "Frame",
+          "when": "resourceLangId == frame"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "frameExplorer",
+          "name": "Frame Explorer"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "frame",
+          "title": "Frame",
+          "icon": "icon.png"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Frame",
+      "properties": {
+        "frame.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Frame CLI binary. Leave empty to search PATH and common locations."
+        },
+        "frame.workspaceRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Override workspace root path for Frame projects. Leave empty to use VS Code workspace root."
+        }
+      }
+    }
   }
 }

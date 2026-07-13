@@ -73,7 +73,8 @@ pub fn compile(project_dir: &str) -> CompilationResult {
     };
 
     // 2. Resolve imports and check circular dependencies
-    let ast = match resolve(ast) {
+    let project_root = std::path::Path::new(project_dir);
+    let ast = match resolve(ast, project_root) {
         Ok(a) => a,
         Err(errs) => {
             return CompilationResult {

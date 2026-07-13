@@ -3,10 +3,58 @@
 use crate::parser::{AST, FrameError, ErrorCategory};
 use crate::parser::ast::ComponentNode;
 use crate::compiler::component_registry;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 pub mod types;
 pub use types::type_check;
+
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct FrameConfig {
+    pub plugins: Option<HashMap<String, String>>,
+    pub paths: Option<HashMap<String, String>>,
+}
+
+pub fn find_project_root(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start.to_path_buf());
+    while let Some(ref dir) = current {
+        if dir.join("frame.config.json").exists() {
+            return Some(dir.clone());
+        }
+        current = dir.parent().map(|p| p.to_path_buf());
+    }
+    None
+}
+
+pub fn load_frame_config(project_root: &Path) -> FrameConfig {
+    let config_path = project_root.join("frame.config.json");
+    if config_path.exists() {
+        std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        FrameConfig::default()
+    }
+}
+
+pub fn resolve_import_path(import_path: &str, current_file: &Path, config: &FrameConfig, project_root: &Path) -> PathBuf {
+    if import_path.starts_with("@/") {
+        let alias_root = config.paths.as_ref()
+            .and_then(|p| p.get("@"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("./src"));
+        project_root.join(alias_root).join(&import_path[2..]).with_extension("fr")
+    } else if import_path.starts_with("./") || import_path.starts_with("../") {
+        let parent = current_file.parent().unwrap_or(Path::new("."));
+        parent.join(import_path).with_extension("fr")
+    } else if import_path.starts_with("frame-") {
+        project_root.join("frame_modules").join(import_path).with_extension("fr")
+    } else {
+        PathBuf::from(import_path)
+    }
+}
 
 /// Returns true if `name` is a known built-in component.
 pub fn is_builtin_component(name: &str) -> bool {
@@ -27,11 +75,12 @@ pub fn builtin_components() -> Vec<&'static str> {
 ///
 /// NOTE: File-level circular dependency detection happens in the parser
 /// (parse_project visits files). Here we detect circular *component* dependencies.
-pub fn resolve(ast: AST) -> Result<AST, Vec<FrameError>> {
+pub fn resolve(ast: AST, project_root: &Path) -> Result<AST, Vec<FrameError>> {
+    let config = load_frame_config(project_root);
     let mut errors = Vec::new();
 
     // 1. Validate imports
-    check_imports(&ast, &mut errors);
+    check_imports(&ast, &mut errors, project_root, &config);
 
     // 2. Check for circular component dependencies
     check_circular_component_deps(&ast, &mut errors);
@@ -43,11 +92,10 @@ pub fn resolve(ast: AST) -> Result<AST, Vec<FrameError>> {
     }
 }
 
-fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
+fn check_imports(ast: &AST, errors: &mut Vec<FrameError>, project_root: &Path, config: &FrameConfig) {
     for imp in &ast.imports {
-        if imp.path == "frame-core" || imp.path.starts_with("frame-") {
-            // Check each named import — first in merged AST (from plugin files),
-            // then against the built-in registry
+        if imp.path == "frame-core" {
+            // Built-in — check each named import against the built-in registry
             for (name, _alias) in &imp.names {
                 let in_ast = ast.functions.contains_key(name)
                     || ast.components.contains_key(name)
@@ -98,13 +146,85 @@ fn check_imports(ast: &AST, errors: &mut Vec<FrameError>) {
                     });
                 }
             }
+        } else if imp.path.starts_with("@/") {
+            // @/ alias import: resolve path and validate file exists
+            let resolved = resolve_import_path(&imp.path, Path::new(""), config, project_root);
+            if !resolved.exists() {
+                errors.push(FrameError {
+                    category: ErrorCategory::UnresolvedImportError,
+                    file: "<project>".to_string(),
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "Unresolved import: '@/' alias path '{}' does not resolve to an existing file. \
+                         Expected: {}",
+                        imp.path, resolved.display()
+                    ),
+                });
+            }
+            for (name, _alias) in &imp.names {
+                if !ast.components.contains_key(name)
+                    && !ast.functions.contains_key(name)
+                    && !ast.objects.contains_key(name)
+                    && !ast.stores.contains_key(name)
+                    && !ast.pages.iter().any(|p| p.name == *name)
+                    && !ast.consts.contains_key(name)
+                {
+                    errors.push(FrameError {
+                        category: ErrorCategory::UnresolvedImportError,
+                        file: "<project>".to_string(),
+                        line: 0,
+                        column: 0,
+                        message: format!(
+                            "Unresolved import: '{}' not found in '@/' path '{}'.",
+                            name, imp.path
+                        ),
+                    });
+                }
+            }
+        } else if imp.path.starts_with("frame-") {
+            // Plugin import: check frame_modules/<name>/ exists
+            let plugin_folder = project_root.join("frame_modules").join(&imp.path);
+            if !plugin_folder.exists() {
+                errors.push(FrameError {
+                    category: ErrorCategory::UnresolvedImportError,
+                    file: "<project>".to_string(),
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "Plugin '{}' is not installed. Run: frame plugin add {}",
+                        imp.path, imp.path
+                    ),
+                });
+            }
+            for (name, _alias) in &imp.names {
+                let in_ast = ast.functions.contains_key(name)
+                    || ast.components.contains_key(name)
+                    || ast.objects.contains_key(name)
+                    || ast.stores.contains_key(name)
+                    || ast.pages.iter().any(|p| p.name == *name)
+                    || ast.consts.contains_key(name);
+                let lower = name.to_lowercase();
+                let snake = pascal_to_snake(name);
+                if !in_ast && !is_builtin_component(&lower) && !is_builtin_component(&snake) {
+                    let avail = component_registry().names().join(", ");
+                    errors.push(FrameError {
+                        category: ErrorCategory::UnresolvedImportError,
+                        file: "<project>".to_string(),
+                        line: 0,
+                        column: 0,
+                        message: format!(
+                            "Unresolved import: '{}' is not exported by plugin '{}'. \
+                             Available built-in components: {avail}",
+                            name, imp.path
+                        ),
+                    });
+                }
+            }
         }
-        // Plugin package imports (frame_maps, etc.) — validated with PluginRegistry
+        // Other plugin packages (frame_maps, etc.) — validated with PluginRegistry
         else {
-            // Plugin package import: check frame_modules/<name>/ exists
-            let plugin_folder = std::path::PathBuf::from("frame_modules").join(&imp.path);
-            // We check relative to CWD; if the caller passes a full AST with a
-            // project root annotation we'd use that. For now we use a best-effort check.
+            let plugin_folder = project_root.join("frame_modules").join(&imp.path);
             if !plugin_folder.exists() {
                 errors.push(FrameError {
                     category: ErrorCategory::UnresolvedImportError,
@@ -215,11 +335,15 @@ mod tests {
         AST::default()
     }
 
+    fn project_root() -> &'static Path {
+        Path::new(".")
+    }
+
     // resolve() returns Ok on a valid empty AST
     #[test]
     fn test_resolve_empty_ast_ok() {
         let ast = empty_ast();
-        assert!(resolve(ast).is_ok());
+        assert!(resolve(ast, project_root()).is_ok());
     }
 
     // resolve() returns Ok on an AST with frame-core imports of known components
@@ -234,7 +358,7 @@ mod tests {
             ],
             path: "frame-core".to_string(),
         });
-        assert!(resolve(ast).is_ok());
+        assert!(resolve(ast, project_root()).is_ok());
     }
 
     // resolve() returns Err for unknown frame-core import
@@ -245,7 +369,7 @@ mod tests {
             names: vec![("NonExistentWidget".to_string(), None)],
             path: "frame-core".to_string(),
         });
-        let result = resolve(ast);
+        let result = resolve(ast, project_root());
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(errs.iter().any(|e| matches!(e.category, ErrorCategory::UnresolvedImportError)));
@@ -275,7 +399,7 @@ mod tests {
         }];
         ast.components.insert("CompB".to_string(), comp_b);
 
-        let result = resolve(ast);
+        let result = resolve(ast, project_root());
         assert!(result.is_err());
         let errs = result.unwrap_err();
         assert!(errs
@@ -305,6 +429,6 @@ mod tests {
             names,
             path: "frame-core".to_string(),
         });
-        assert!(resolve(ast).is_ok());
+        assert!(resolve(ast, project_root()).is_ok());
     }
 }

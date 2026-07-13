@@ -6,6 +6,7 @@ pub mod runtime;
 pub mod testing;
 pub mod cli;
 pub mod plugins;
+pub mod lsp;
 
 // Legacy modules kept for backward compatibility with existing code
 pub mod components;

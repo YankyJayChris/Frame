@@ -8,6 +8,7 @@
 		{ "include": "#comments" },
 		{ "include": "#strings" },
 		{ "include": "#keywords" },
+		{ "include": "#matchers" },
 		{ "include": "#declarations" },
 		{ "include": "#variables" },
 		{ "include": "#functions" },
@@ -20,6 +21,7 @@
 		{ "include": "#events" },
 		{ "include": "#store_fields" },
 		{ "include": "#interpolation" },
+		{ "include": "#interpolation_bracket" },
 		{ "include": "#numbers" },
 		{ "include": "#types" }
 	],
@@ -62,7 +64,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.frame",
-					"match": "\\b(page|component|fn|if|else|for|in|switch|case|default|return|try|catch|import|show_if|build)\\b"
+					"match": "\\b(page|component|fn|if|else|for|in|switch|case|default|return|try|catch|import|show_if|build|animate|positioned|before_leave|on_background|on_foreground|async|secure|local)\\b"
 				},
 				{
 					"name": "keyword.control.wait.frame",
@@ -74,16 +76,24 @@
 				},
 				{
 					"name": "storage.type.frame",
-					"match": "\\b(:var|:store|:obj|:enum|:vars|:breakpoints|:typography|:i18n|:const)\\b"
+					"match": "\\b(:var|:store|:obj|:enum|:vars|:breakpoints|:typography|:i18n|:const|:app|:validation|:type)\\b"
 				},
 				{
 					"name": "keyword.control.navigate.frame",
-					"match": "\\b(navigate|navigate_back)\\s*(?=\\()"
-				},
-				{
-					"name": "keyword.control.plugin.frame",
-					"match": "\\bplugin:"
-				}
+				"match": "\\b(navigate|navigate_back|navigate_modal|navigate_dismiss)\\s*(?=\\()"
+			},
+			{
+				"name": "keyword.control.plugin.frame",
+				"match": "\\bplugin:"
+			},
+			{
+				"name": "keyword.control.colon.frame",
+				"match": "\\b(describe|it|expect|mock|persist|watch|data|build|columns):"
+			},
+			{
+				"name": "keyword.control.navigate.frame",
+				"match": "\\b(navigate_back|navigate_modal|navigate_dismiss)\\b"
+			}
 			]
 		},
 		"declarations": {
@@ -166,7 +176,7 @@
 			"patterns": [
 				{
 					"name": "entity.name.tag.builtin.frame",
-					"match": "\\b(text|button|image|icon|row|column|container|stack|list|input|dropdown|form|app_bar|bottom_navigation_bar|scaffold|card|divider|spacer|modal|scroll_view|grid|plugin|item|toast|tooltip|badge|progress_bar|progress_circle|tab_bar|tab|sidebar|bottom_sheet|switch|checkbox|radio|slider|stepper|text_area|search_bar|date_picker|time_picker|color_picker|rating|otp_input|floating_action_button|avatar|chip|tag|banner|table|accordion|timeline|skeleton|video_player|audio_player|lottie|web_view|map_view|camera_view|qr_scanner|swipeable|draggable|refresh|long_press)\\s*(?=:)"
+					"match": "\\b(text|button|image|icon|row|column|container|stack|list|input|dropdown|form|app_bar|bottom_navigation_bar|scaffold|card|divider|spacer|modal|scroll_view|grid|plugin|item|toast|tooltip|badge|progress_bar|progress_circle|tab_bar|tab|sidebar|bottom_sheet|switch|checkbox|radio|slider|stepper|text_area|search_bar|date_picker|time_picker|color_picker|rating|otp_input|floating_action_button|avatar|chip|tag|banner|table|accordion|timeline|skeleton|video_player|audio_player|lottie|web_view|map_view|camera_view|qr_scanner|swipeable|draggable|refresh|long_press|navigation_rail|drawer|popup_menu|menu|selectable_text|wrap|flow)\\s*(?=:)"
 				}
 			]
 		},
@@ -241,7 +251,7 @@
 					"end": "(?=\\}|\\])",
 					"patterns": [
 						{
-							"match": "(safe_area|width|height|min_width|min_height|max_width|max_height|padding|padding_top|padding_bottom|padding_start|padding_end|margin|margin_top|margin_bottom|margin_start|margin_end|border_radius|border_width|border_color|background|color|font_size|font_weight|font_style|font_family|text_align|text_decoration|line_height|letter_spacing|word_spacing|overflow|clip_behavior|opacity|visibility|elevation|shadow_color|shadow_offset|shadow_blur_radius|shadow_spread_radius|align|align_self|justify|gap|aspect_ratio|weight|flex|position|top|bottom|left|right|start|end|z_index|transform|rotate|scale|translate_x|translate_y|animation|transition_duration|transition_curve)\\s*:",
+							"match": "(safe_area|width|height|min_width|min_height|max_width|max_height|padding|padding_top|padding_bottom|padding_start|padding_end|margin|margin_top|margin_bottom|margin_start|margin_end|border_radius|border_width|border_color|background|color|font_size|font_weight|font_style|font_family|text_align|text_decoration|line_height|letter_spacing|word_spacing|overflow|overflow_x|overflow_y|clip_behavior|opacity|visibility|elevation|shadow_color|shadow_offset|shadow_blur_radius|shadow_spread_radius|align|align_self|justify|gap|aspect_ratio|weight|flex|position|top|bottom|left|right|start|end|z_index|transform|rotate|scale|translate_x|translate_y|animation|transition_duration|transition_curve|scroll_indicator|scroll_snap|scroll_enabled|fit|text_overflow|max_lines|line_clamp|border|direction|wrap)\\s*:",
 							"name": "support.type.property-name.style.frame"
 						},
 						{ "include": "#strings" },
@@ -259,7 +269,7 @@
 			"patterns": [
 				{
 					"name": "support.function.event.frame",
-					"match": "\\b(on_click|on_change|on_submit|on_select|on_touch_start|on_touch_move|on_touch_end|on_touch_cancel|on_mount|on_update|on_unmount|on_scroll|on_scroll_end|on_scan|on_refresh|on_increment|on_decrement|on_complete|on_long_press|on_drag|on_swipe|on_focus|on_blur|on_key_press|on_hover|on_animation_end)\\s*(?=:)"
+					"match": "\\b(on_click|on_change|on_submit|on_select|on_touch_start|on_touch_move|on_touch_end|on_touch_cancel|on_mount|on_update|on_unmount|on_scroll|on_scroll_end|on_scan|on_refresh|on_increment|on_decrement|on_complete|on_long_press|on_drag|on_swipe|on_focus|on_blur|on_key_press|on_hover|on_animation_end|on_watch)\\s*(?=:)"
 				}
 			]
 		},
@@ -276,6 +286,22 @@
 				{
 					"name": "storage.type.frame",
 					"match": "\\b(int|float|bool|string|object|list|null|void)\\b"
+				}
+			]
+		},
+		"matchers": {
+			"patterns": [
+				{
+					"name": "keyword.operator.matcher.frame",
+					"match": "\\b(\\.toBe|\\.toEqual|\\.toContain|\\.toBeNull|\\.toBeTrue|\\.toBeFalse|\\.toThrow):"
+				}
+			]
+		},
+		"interpolation_bracket": {
+			"patterns": [
+				{
+					"name": "punctuation.definition.template-expression.frame",
+					"match": "\\\\\\(|\\$\\{"
 				}
 			]
 		}

@@ -8,6 +8,7 @@ use frame::cli::{
     collect_icon_assets, generate_ios_icon_assets, generate_android_icon_assets,
     log_icon_summary, write_icon_lookup_table,
 };
+use frame::lsp;
 use std::path::Path;
 
 fn main() {
@@ -184,6 +185,20 @@ fn main() {
                 println!("✓ Icon generation complete");
             }
         },
+
+        // ── frame lsp ─────────────────────────────────────────────────────────
+        Commands::Lsp { workspace_root } => {
+            let root = std::path::Path::new(&workspace_root);
+            let root = frame::lsp::server::FrameLanguageServer::find_project_root(root)
+                .unwrap_or_else(|| root.to_path_buf());
+            let rt = tokio::runtime::Runtime::new().unwrap_or_else(|e| {
+                eprintln!("Error creating tokio runtime: {e}");
+                std::process::exit(1);
+            });
+            rt.block_on(async {
+                lsp::run_lsp_server(root).await;
+            });
+        }
 
         // ── frame init-examples ───────────────────────────────────────────────
         Commands::InitExamples => {

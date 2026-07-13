@@ -136,6 +136,13 @@ pub enum Commands {
     /// Regenerate example projects (examples/blog-app MVC + examples/profile Clean Architecture).
     InitExamples,
 
+    /// Start the Frame Language Server (LSP) over stdio for IDE integration.
+    Lsp {
+        /// Workspace root directory (defaults to current dir).
+        #[arg(long, default_value = ".")]
+        workspace_root: String,
+    },
+
     /// Manage icons in the project.
     Icon {
         #[command(subcommand)]
