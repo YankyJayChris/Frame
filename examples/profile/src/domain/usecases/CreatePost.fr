@@ -1,0 +1,43 @@
+// CreatePost use case — validate input and create a new post.
+// Business rules enforced here, not in the UI layer.
+import { PostRepository } "../repositories/PostRepository.fr"
+import { AuthStore } "../../presentation/stores/AuthStore.fr"
+
+fn createPost: async (title: string, body: string, tags: list) => {
+    // Auth guard
+    if AuthStore.user == null {
+        throw "You must be signed in to create a post"
+    }
+    // Validate title
+    :var clean_title = title.trim()
+    if clean_title.length == 0 {
+        throw "Title cannot be empty"
+    }
+    if clean_title.length > 120 {
+        throw "Title must be 120 characters or fewer"
+    }
+    // Validate body
+    :var clean_body = body.trim()
+    if clean_body.length < 10 {
+        throw "Post body must be at least 10 characters"
+    }
+    // Enforce tag limit
+    if tags.length > 5 {
+        throw "A post can have at most 5 tags"
+    }
+    return wait:PostRepository.create(clean_title, clean_body, tags)
+}
+
+fn publishPost: async (id: string) => {
+    if AuthStore.user == null {
+        throw "You must be signed in to publish a post"
+    }
+    :var post = wait:PostRepository.getById(id)
+    if post == null {
+        throw "Post not found"
+    }
+    if post.author_id != AuthStore.user.id {
+        throw "You can only publish your own posts"
+    }
+    return wait:PostRepository.publish(id)
+}

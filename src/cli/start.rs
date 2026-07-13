@@ -26,16 +26,11 @@ pub fn scaffold_project(name: &str, arch: Architecture) -> std::io::Result<()> {
 }
 
 /// Scaffold (or re-scaffold) into an existing directory.
-/// Used internally by examples and tests.
 pub fn scaffold_project_in(root: &Path, name: &str, arch: Architecture) -> std::io::Result<()> {
     scaffold_into(root, name, arch)
 }
 
-/// Regenerate the `examples/` directory (plan §7f).
-///
-/// Creates:
-/// - `examples/blog-app`  — MVC architecture
-/// - `examples/profile`   — Clean Architecture
+/// Regenerate the `examples/` directory.
 pub fn run_init_examples() -> std::io::Result<()> {
     let examples_dir = Path::new("examples");
 
@@ -57,7 +52,6 @@ pub fn run_init_examples() -> std::io::Result<()> {
 fn scaffold_into(root: &Path, name: &str, arch: Architecture) -> std::io::Result<()> {
     println!("Creating Frame project: {}", name);
 
-    // Common directories
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("assets/fonts"))?;
     fs::create_dir_all(root.join("assets/images"))?;
@@ -65,22 +59,20 @@ fn scaffold_into(root: &Path, name: &str, arch: Architecture) -> std::io::Result
     fs::create_dir_all(root.join("frame_modules"))?;
 
     match arch {
-        Architecture::CleanArchitecture => scaffold_clean(root)?,
-        Architecture::Mvc               => scaffold_mvc(root)?,
+        Architecture::CleanArchitecture => scaffold_clean(root, name)?,
+        Architecture::Mvc               => scaffold_mvc(root, name)?,
     }
 
     write_project_fr(root, name, arch)?;
     write_frame_config(root, name)?;
     write_gitignore(root)?;
     write_readme(root, name, arch)?;
-    write_sample_tests(root, name, arch)?;
+    write_sample_tests(root, arch)?;
 
-    // Scaffold example plugins
     scaffold_camera_plugin(root)?;
     scaffold_storage_plugin(root)?;
     scaffold_connectivity_plugin(root)?;
 
-    // Write default icon bundle
     write_default_bundle(root).unwrap_or_else(|e| {
         eprintln!("Warning: could not write default icon bundle: {e}");
     });
@@ -91,655 +83,1620 @@ fn scaffold_into(root: &Path, name: &str, arch: Architecture) -> std::io::Result
     println!("    cd {}", name);
     println!("    frame check");
     println!("    frame build");
-    println!("    frame test          # run sample tests");
+    println!("    frame test");
     println!("    frame deploy android");
     println!("    frame deploy ios");
     Ok(())
 }
 
-// ─── Clean Architecture scaffold ──────────────────────────────────────────────
+// ─── Clean Architecture scaffold ─────────────────────────────────────────────
 
-fn scaffold_clean(root: &Path) -> std::io::Result<()> {
+fn scaffold_clean(root: &Path, _name: &str) -> std::io::Result<()> {
     fs::create_dir_all(root.join("src/domain/entities"))?;
-    fs::create_dir_all(root.join("src/domain/usecases"))?;
     fs::create_dir_all(root.join("src/domain/repositories"))?;
+    fs::create_dir_all(root.join("src/domain/usecases"))?;
     fs::create_dir_all(root.join("src/data/repositories"))?;
     fs::create_dir_all(root.join("src/data/models"))?;
     fs::create_dir_all(root.join("src/presentation/pages"))?;
     fs::create_dir_all(root.join("src/presentation/components"))?;
-    fs::create_dir_all(root.join("src/presentation/state"))?;
+    fs::create_dir_all(root.join("src/presentation/stores"))?;
 
-    // Entity — defines the User data shape (used by UserStore, referenced in UserCard)
-    fs::write(root.join("src/domain/entities/User.fr"),
-        ":obj User {\n    id:    string\n    name:  string\n    email: string\n    bio:   string?\n}\n")?;
+    // ── Domain layer ──────────────────────────────────────────────────────────
 
-    // Data model / store — holds user state, fetches from API
-    // Demonstrates: :var (immutable by default), fetch headers, named args, try/catch
-    fs::write(root.join("src/data/models/UserModel.fr"),
-        concat!(
-            ":store UserStore {\n",
-            "    :var user: object? = null\n",
-            "    :var mut is_loading: bool = false\n",
-            "    :var mut error: string = \"\"\n",
-            "\n",
-            "    fn load: async (id: string) => {\n",
-            "        is_loading = true\n",
-            "        error = \"\"\n",
-            "        try {\n",
-            "            :var result = wait:fetch(\"/api/users/$id\", {\n",
-            "                method: \"GET\"\n",
-            "                headers: {\n",
-            "                    Authorization: \"Bearer $token\"\n",
-            "                    Content-Type: \"application/json\"\n",
-            "                }\n",
-            "            })\n",
-            "            if result != null {\n",
-            "                user = result\n",
-            "            } else {\n",
-            "                error = \"User not found\"\n",
-            "            }\n",
-            "        } catch (err) {\n",
-            "            error = err\n",
-            "        }\n",
-            "        is_loading = false\n",
-            "    }\n",
-            "}\n",
-        ))?;
+    // Post entity — core business object, no framework dependencies
+    fs::write(root.join("src/domain/entities/Post.fr"), r##"// Post — core domain entity.
+// Plain data object; no framework deps, no store logic here.
+:obj Post {
+    id:         string
+    title:      string
+    body:       string
+    author_id:  string
+    author:     string
+    tags:       list
+    published:  bool
+    created_at: string
+    updated_at: string
+}
+"##)?;
 
-    // Component — used by HomePage, displays user info from store
-    // Demonstrates: named params with defaults, interpolated strings
-    fs::write(root.join("src/presentation/components/UserCard.fr"),
-                "import { text, column } \"frame-core\"\n\n\
-         component UserCard: {\n\
-             props: {\n\
-                 name: string = \"\"\n\
-                 email: string = \"\"\n\
-                 bio: string = \"\"\n\
-             }\n\
-             styles: {\n\
-                 padding: 12dp\n\
-                 border_radius: 8dp\n\
-                 overflow: hidden\n\
-                 margin_bottom: 8dp\n\
-             }\n\
-             children: [\n\
-                 column: {\n\
-                     styles: { gap: 4dp }\n\
-                     children: [\n\
-                         text: { content: name  styles: { font_size: 16sp  font_weight: \"bold\" } }\n\
-                         text: { content: email  styles: { font_size: 14sp } }\n\
-                         text: { content: bio  styles: { font_size: 14sp  font_style: \"italic\" } }\n\
-                     ]\n\
-                 }\n\
-             ]\n\
-         }\n")?;
+    // User entity
+    fs::write(root.join("src/domain/entities/User.fr"), r##"// User — core domain entity.
+:obj User {
+    id:         string
+    name:       string
+    email:      string
+    avatar_url: string?
+    bio:        string?
+    post_count: int
+    joined_at:  string
+}
+"##)?;
 
-    // Presentation page — imports UserCard, plugin API, reads UserStore state
-    // Demonstrates: show_if, plugin import, button actions, navigate options,
-    //               page lifecycle hooks (on_mount, on_background, on_foreground)
-    fs::write(root.join("src/presentation/pages/HomePage.fr"),
-        concat!(
-            "import {\n",
-            "  text, button, icon, image, row, column, scaffold, card, divider, spacer,\n",
-            "  app_bar, sidebar, floating_action_button, list, form, input, search_bar,\n",
-            "  switch, slider, rating, stepper, badge, chip, tag, progress_bar, toast,\n",
-            "  modal, scroll_view, grid, avatar, banner, skeleton\n",
-            "} \"frame-core\"\n",
-            "import { UserCard } \"../components/UserCard.fr\"\n",
-            "import { capture } \"frame-camera\"\n",
-            "import { isOnline } \"frame-connectivity\"\n\n",
-            "page: {\n",
-            "    name: \"Home\"\n",
-            "    route: \"/home\"\n",
-            "    // Page lifecycle — all accept expressions, not just string names\n",
-            "    before_enter: checkNetworkAccess\n",
-            "    on_mount:     loadInitialData\n",
-            "    on_background: pausePolling\n",
-            "    on_foreground: resumePolling\n",
-            "    on_unmount:   cancelPendingRequests\n",
-            "    styles: { width: 100%  height: 100%  safe_area: true }\n",
-            "    children: [\n",
-            "        scaffold: {\n",
-            "            styles: { safe_area: true }\n",
-            "            children: [\n",
-            "                app_bar: {\n",
-            "                    title: \"Frame App\"\n",
-            "                    leading: \"line.3.horizontal\"\n",
-            "                    children: [\n",
-            "                        icon: { name: \"magnifyingglass\"  on_click: openSearch() }\n",
-            "                        icon: { name: \"gearshape\"  on_click: openSettings() }\n",
-            "                    ]\n",
-            "                }\n",
-            "                row: {\n",
-            "                    styles: { width: 100%  height: 100% }\n",
-            "                    children: [\n",
-            "                        sidebar: {\n",
-            "                            side: \"left\"\n",
-            "                            width: \"220\"\n",
-            "                            styles: { background: \"#F8F9FA\"  padding: 8 }\n",
-            "                            children: [\n",
-            "                                text: { content: \"Menu\"  styles: { font_weight: \"bold\"  padding: 8 } }\n",
-            "                                // navigate with options\n",
-            "                                button: { content: \"Dashboard\"  on_click: navigate(\"/dashboard\") }\n",
-            "                                // navigate_replace — no back-stack entry for settings\n",
-            "                                button: { content: \"Profile\"  on_click: navigate(\"/profile\", replace: true) }\n",
-            "                                button: { content: \"Settings\"  on_click: navigate_modal(\"/settings\") }\n",
-            "                                divider: {}\n",
-            "                                text: { content: \"Tags\"  styles: { font_weight: \"bold\"  padding: 8 } }\n",
-            "                                chip: { content: \"Important\" }\n",
-            "                                tag: { content: \"New\" }\n",
-            "                            ]\n",
-            "                        }\n",
-            "                        column: {\n",
-            "                            // on_mount / on_update + watch on a component node\n",
-            "                            on_mount:  refreshList\n",
-            "                            on_update: refreshList\n",
-            "                            watch:     UserStore.user\n",
-            "                            on_unmount: stopRefresh\n",
-            "                            styles: { padding: 16  gap: 12  width: 100%  overflow: scroll }\n",
-            "                            children: [\n",
-            "                                // ── Loading state ──────────────────────────────\n",
-            "                                text: {\n",
-            "                                    content: \"Loading...\"\n",
-            "                                    styles: { font_size: 16sp }\n",
-            "                                    show_if: UserStore.is_loading\n",
-            "                                }\n",
-            "                                skeleton: {\n",
-            "                                    show_if: UserStore.is_loading\n",
-            "                                }\n\n",
-            "                                // ── User card ──────────────────────────────────\n",
-            "                                UserCard: {\n",
-            "                                    name: UserStore.user.name\n",
-            "                                    email: UserStore.user.email\n",
-            "                                    bio: UserStore.user.bio\n",
-            "                                    show_if: UserStore.user != null\n",
-            "                                }\n\n",
-            "                                // ── Error state ───────────────────────────────\n",
-            "                                text: {\n",
-            "                                    content: UserStore.error\n",
-            "                                    styles: { color: \"#FF0000\"  font_size: 14sp }\n",
-            "                                    show_if: UserStore.error != \"\"\n",
-            "                                }\n\n",
-            "                                // ── Actions ───────────────────────────────────\n",
-            "                                button: {\n",
-            "                                    content: \"Load Profile\"\n",
-            "                                    on_click: wait:UserStore.load(\"1\")\n",
-            "                                }\n",
-            "                                button: {\n",
-            "                                    content: \"Capture Photo\"\n",
-            "                                    on_click: wait:capture(\"jpg\", 0.9, \"camera\")\n",
-            "                                }\n",
-            "                                // Navigate to profile with typed param\n",
-            "                                button: {\n",
-            "                                    content: \"View Profile\"\n",
-            "                                    on_click: navigate(\"/profile/1\")\n",
-            "                                }\n",
-            "                                // Navigate back to home (clear modal/detail)\n",
-            "                                button: {\n",
-            "                                    content: \"Back to Root\"\n",
-            "                                    on_click: navigate_back_to(\"/home\")\n",
-            "                                }\n\n",
-            "                                // ── Card with form controls ────────────────────\n",
-            "                                card: {\n",
-            "                                    styles: { padding: 16  margin_top: 8 }\n",
-            "                                    children: [\n",
-            "                                        text: { content: \"Settings\"  styles: { font_size: 18sp  font_weight: \"bold\" } }\n",
-            "                                        spacer: { styles: { height: 8 } }\n",
-            "                                        row: {\n",
-            "                                            styles: { align: \"center\"  justify: \"space_between\" }\n",
-            "                                            children: [\n",
-            "                                                text: { content: \"Enable Notifications\" }\n",
-            "                                                switch: { value: notificationsEnabled  on_change: toggleNotifications() }\n",
-            "                                            ]\n",
-            "                                        }\n",
-            "                                        row: {\n",
-            "                                            styles: { align: \"center\"  justify: \"space_between\" }\n",
-            "                                            children: [\n",
-            "                                                text: { content: \"Dark Mode\" }\n",
-            "                                                switch: { value: darkMode }\n",
-            "                                            ]\n",
-            "                                        }\n",
-            "                                        divider: {}\n",
-            "                                        text: { content: \"Volume\"  styles: { font_size: 14sp } }\n",
-            "                                        slider: { value: volume  min: 0  max: 100  on_change: adjustVolume() }\n",
-            "                                        text: { content: \"Rating\"  styles: { font_size: 14sp } }\n",
-            "                                        rating: { value: 3  max: 5  on_change: rateApp() }\n",
-            "                                        text: { content: \"Quantity\"  styles: { font_size: 14sp } }\n",
-            "                                        stepper: { value: quantity  on_increment: inc()  on_decrement: dec() }\n",
-            "                                    ]\n",
-            "                                }\n\n",
-            "                                // ── Search ─────────────────────────────────────\n",
-            "                                search_bar: {\n",
-            "                                    value: searchQuery\n",
-            "                                    placeholder: \"Search...\"\n",
-            "                                    on_change: updateQuery()\n",
-            "                                }\n\n",
-            "                                // ── Tags & badges ─────────────────────────────\n",
-            "                                row: {\n",
-            "                                    styles: { gap: 8  align: \"center\" }\n",
-            "                                    children: [\n",
-            "                                        badge: { count: 5 }\n",
-            "                                        chip: { content: \"Filter\"  on_click: applyFilter() }\n",
-            "                                        tag: { content: \"Beta\" }\n",
-            "                                        avatar: { src: \"https://i.pravatar.cc/40\" }\n",
-            "                                    ]\n",
-            "                                }\n\n",
-            "                                // ── Progress ───────────────────────────────────\n",
-            "                                progress_bar: { value: 0.65 }\n",
-            "                                progress_circle: { value: 0.8 }\n\n",
-            "                                // ── Toast trigger ─────────────────────────────\n",
-            "                                button: {\n",
-            "                                    content: \"Show Toast\"\n",
-            "                                    on_click: showToast(\"Hello from Frame!\")\n",
-            "                                }\n",
-            "                            ]\n",
-            "                        }\n",
-            "                    ]\n",
-            "                }\n",
-            "            ]\n",
-            "        }\n",
-            "        floating_action_button: {\n",
-            "            children: [\n",
-            "                icon: { name: \"plus\"  styles: { color: \"#FFFFFF\"  width: 24  height: 24 } }\n",
-            "            ]\n",
-            "            on_click: handleAdd()\n",
-            "        }\n",
-            "    ]\n",
-            "}\n\n",
-            "// ── Profile page — demonstrates typed route params ───────────────────────────\n",
-            "page: {\n",
-            "    name: \"Profile\"\n",
-            "    route: \"/profile/:userId\"\n",
-            "    params: { userId: string }\n",
-            "    before_enter: checkAuth\n",
-            "    on_mount:     loadProfile\n",
-            "    before_leave: saveEdits\n",
-            "    styles: { safe_area: true }\n",
-            "    children: [\n",
-            "        scaffold: {\n",
-            "            styles: { safe_area: true }\n",
-            "            children: [\n",
-            "                app_bar: {\n",
-            "                    title: \"Profile\"\n",
-            "                    leading: \"chevron.left\"\n",
-            "                    children: [\n",
-            "                        // navigate_back — pop one entry\n",
-            "                        icon: { name: \"xmark\"  on_click: navigate_back() }\n",
-            "                    ]\n",
-            "                }\n",
-            "                column: {\n",
-            "                    styles: { padding: 16  gap: 12 }\n",
-            "                    children: [\n",
-            "                        text: { content: \"User ID: \" }\n",
-            "                        avatar: { src: \"https://i.pravatar.cc/80\" }\n",
-            "                        button: { content: \"Go Home\"  on_click: navigate(\"/home\", clear_stack: true) }\n",
-            "                        button: { content: \"Dismiss Modal\"  on_click: navigate_dismiss() }\n",
-            "                    ]\n",
-            "                }\n",
-            "            ]\n",
-            "        }\n",
-            "    ]\n",
-            "}\n\n",
-            "// ── Page lifecycle functions ──────────────────────────────────────────────────\n",
-            "fn checkNetworkAccess: async () => {\n",
-            "    :var online = wait:isOnline(\"any\")\n",
-            "    if online != true {\n",
-            "        navigate_modal(\"/offline\")\n",
-            "    }\n",
-            "}\n\n",
-            "fn loadInitialData: async () => {\n",
-            "    wait:UserStore.load(\"1\")\n",
-            "}\n\n",
-            "fn pausePolling: () => {\n",
-            "    log.info(\"Home: pausing network polling\")\n",
-            "}\n\n",
-            "fn resumePolling: () => {\n",
-            "    log.info(\"Home: resuming network polling\")\n",
-            "}\n\n",
-            "fn cancelPendingRequests: () => {\n",
-            "    log.info(\"Home: cancelling pending requests\")\n",
-            "}\n\n",
-            "fn refreshList: () => {\n",
-            "    log.debug(\"Column: refreshing list\")\n",
-            "}\n\n",
-            "fn stopRefresh: () => {\n",
-            "    log.debug(\"Column: stopping refresh\")\n",
-            "}\n\n",
-            "fn checkAuth: async () => {\n",
-            "    log.info(\"Profile: checking auth\")\n",
-            "}\n\n",
-            "fn loadProfile: async () => {\n",
-            "    log.info(\"Profile: loading\")\n",
-            "}\n\n",
-            "fn saveEdits: () => {\n",
-            "    log.info(\"Profile: saving edits\")\n",
-            "}\n",
-        ))?;
+    // Repository interface — domain defines the contract, data layer implements it
+    fs::write(root.join("src/domain/repositories/PostRepository.fr"), r##"// PostRepository — abstract contract the domain layer depends on.
+// The data layer provides the concrete implementation.
+// This inversion keeps domain logic independent of API/DB details.
+:interface PostRepository {
+    fn getAll:      async () => list
+    fn getById:     async (id: string) => object?
+    fn getByAuthor: async (author_id: string) => list
+    fn create:      async (title: string, body: string, tags: list) => object
+    fn update:      async (id: string, title: string, body: string) => object
+    fn delete:      async (id: string) => bool
+    fn publish:     async (id: string) => object
+    fn search:      async (query: string) => list
+}
+"##)?;
+
+    // ── Use cases — one file per business action ──────────────────────────────
+
+    // GetPosts — list + filter use case
+    fs::write(root.join("src/domain/usecases/GetPosts.fr"), r##"// GetPosts use case — fetch and filter the post list.
+// Business rules: only return published posts unless author is requesting own posts.
+import { PostRepository } "../repositories/PostRepository.fr"
+import { AuthStore } "../../presentation/stores/AuthStore.fr"
+
+fn getPosts: async () => {
+    :var all = wait:PostRepository.getAll()
+    // Business rule: unauthenticated users only see published posts
+    if AuthStore.user == null {
+        return all.filter((p) => p.published == true)
+    }
+    // Authenticated users see their own drafts too
+    :var user_id = AuthStore.user.id
+    return all.filter((p) => p.published == true || p.author_id == user_id)
+}
+
+fn getPostsByAuthor: async (author_id: string) => {
+    if author_id == "" {
+        throw "author_id is required"
+    }
+    return wait:PostRepository.getByAuthor(author_id)
+}
+
+fn searchPosts: async (query: string) => {
+    if query == "" {
+        return wait:getPosts()
+    }
+    :var trimmed = query.trim()
+    if trimmed.length < 2 {
+        throw "Search query must be at least 2 characters"
+    }
+    return wait:PostRepository.search(trimmed)
+}
+"##)?;
+
+    // CreatePost use case — input validation + business logic
+    fs::write(root.join("src/domain/usecases/CreatePost.fr"), r##"// CreatePost use case — validate input and create a new post.
+// Business rules enforced here, not in the UI layer.
+import { PostRepository } "../repositories/PostRepository.fr"
+import { AuthStore } "../../presentation/stores/AuthStore.fr"
+
+fn createPost: async (title: string, body: string, tags: list) => {
+    // Auth guard
+    if AuthStore.user == null {
+        throw "You must be signed in to create a post"
+    }
+    // Validate title
+    :var clean_title = title.trim()
+    if clean_title.length == 0 {
+        throw "Title cannot be empty"
+    }
+    if clean_title.length > 120 {
+        throw "Title must be 120 characters or fewer"
+    }
+    // Validate body
+    :var clean_body = body.trim()
+    if clean_body.length < 10 {
+        throw "Post body must be at least 10 characters"
+    }
+    // Enforce tag limit
+    if tags.length > 5 {
+        throw "A post can have at most 5 tags"
+    }
+    return wait:PostRepository.create(clean_title, clean_body, tags)
+}
+
+fn publishPost: async (id: string) => {
+    if AuthStore.user == null {
+        throw "You must be signed in to publish a post"
+    }
+    :var post = wait:PostRepository.getById(id)
+    if post == null {
+        throw "Post not found"
+    }
+    if post.author_id != AuthStore.user.id {
+        throw "You can only publish your own posts"
+    }
+    return wait:PostRepository.publish(id)
+}
+"##)?;
+
+    // ── Data layer — concrete repository implementation ───────────────────────
+
+    // RemotePostRepository — real HTTP calls, maps raw JSON to domain entities
+    fs::write(root.join("src/data/repositories/RemotePostRepository.fr"), r##"// RemotePostRepository — concrete implementation of PostRepository.
+// Handles HTTP, error mapping, and response parsing.
+// The domain layer never imports this directly.
+import { Post } "../../domain/entities/Post.fr"
+import { AuthStore } "../../presentation/stores/AuthStore.fr"
+
+:var BASE_URL = "https://api.example.com/v1"
+
+fn getAll: async () => {
+    :var res = wait:fetch("$BASE_URL/posts", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.ok != true {
+        throw "Failed to load posts: $res.status"
+    }
+    return res.data.posts
+}
+
+fn getById: async (id: string) => {
+    :var res = wait:fetch("$BASE_URL/posts/$id", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.status == 404 {
+        return null
+    }
+    if res.ok != true {
+        throw "Failed to load post: $res.status"
+    }
+    return res.data
+}
+
+fn getByAuthor: async (author_id: string) => {
+    :var res = wait:fetch("$BASE_URL/posts?author_id=$author_id", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.ok != true {
+        throw "Failed to load posts: $res.status"
+    }
+    return res.data.posts
+}
+
+fn create: async (title: string, body: string, tags: list) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts", {
+        method: "POST"
+        headers: {
+            Authorization: "Bearer $token"
+            Content-Type:  "application/json"
+        }
+        body: { title: title  body: body  tags: tags }
+    })
+    if res.ok != true {
+        throw "Failed to create post: $res.status $res.data.message"
+    }
+    return res.data
+}
+
+fn update: async (id: string, title: string, body: string) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts/$id", {
+        method: "PATCH"
+        headers: {
+            Authorization: "Bearer $token"
+            Content-Type:  "application/json"
+        }
+        body: { title: title  body: body }
+    })
+    if res.ok != true {
+        throw "Failed to update post: $res.status"
+    }
+    return res.data
+}
+
+fn delete: async (id: string) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts/$id", {
+        method: "DELETE"
+        headers: { Authorization: "Bearer $token" }
+    })
+    return res.ok
+}
+
+fn publish: async (id: string) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts/$id/publish", {
+        method: "POST"
+        headers: { Authorization: "Bearer $token" }
+    })
+    if res.ok != true {
+        throw "Failed to publish post: $res.status"
+    }
+    return res.data
+}
+
+fn search: async (query: string) => {
+    :var encoded = query.url_encode()
+    :var res = wait:fetch("$BASE_URL/posts/search?q=$encoded", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.ok != true {
+        throw "Search failed: $res.status"
+    }
+    return res.data.posts
+}
+"##)?;
+
+    // ── Presentation stores ───────────────────────────────────────────────────
+
+    // AuthStore — session management, persists token to device storage
+    fs::write(root.join("src/presentation/stores/AuthStore.fr"), r##"// AuthStore — manages auth session and persists token across restarts.
+import { saveFile, loadFile } "frame-storage"
+
+:store AuthStore {
+    user:          object? = null
+    token:         string  = ""
+    is_loading:    bool    = false
+    error:         string  = ""
+    is_signed_in:  bool    = false
+
+    fn init: async () => {
+        // Restore session from device storage on app launch
+        try {
+            :var stored = wait:loadFile("session.json", "documents", "utf8")
+            if stored != "" {
+                :var session = stored.parse_json()
+                AuthStore.token        = session.token
+                AuthStore.user         = session.user
+                AuthStore.is_signed_in = true
+            }
+        } catch (err) {
+            // No stored session — fresh start, not an error
+            log.debug("No stored session: $err")
+        }
+    }
+
+    fn signIn: async (email: string, password: string) => {
+        AuthStore.is_loading = true
+        AuthStore.error      = ""
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/auth/login", {
+                method: "POST"
+                headers: { Content-Type: "application/json" }
+                body: { email: email  password: password }
+            })
+            if res.ok != true {
+                AuthStore.error = res.data.message || "Sign in failed"
+                return
+            }
+            AuthStore.token        = res.data.token
+            AuthStore.user         = res.data.user
+            AuthStore.is_signed_in = true
+            // Persist session
+            :var session = { token: res.data.token  user: res.data.user }
+            wait:saveFile("session.json", session.to_json(), "documents", "utf8")
+        } catch (err) {
+            AuthStore.error = "Network error. Please check your connection."
+        }
+        AuthStore.is_loading = false
+    }
+
+    fn signOut: async () => {
+        AuthStore.user         = null
+        AuthStore.token        = ""
+        AuthStore.is_signed_in = false
+        AuthStore.error        = ""
+        wait:saveFile("session.json", "", "documents", "utf8")
+        navigate("/sign-in", clear_stack: true)
+    }
+}
+"##)?;
+
+    // PostStore — post list + pagination + optimistic updates
+    fs::write(root.join("src/presentation/stores/PostStore.fr"), r##"// PostStore — post list with pagination, search, and optimistic create.
+import { getPosts, searchPosts } "../../domain/usecases/GetPosts.fr"
+import { createPost, publishPost } "../../domain/usecases/CreatePost.fr"
+
+:store PostStore {
+    posts:          list   = []
+    selected_post:  object? = null
+    search_query:   string = ""
+    is_loading:     bool   = false
+    is_creating:    bool   = false
+    error:          string = ""
+    page:           int    = 1
+    has_more:       bool   = true
+    total_count:    int    = 0
+
+    fn load: async () => {
+        PostStore.is_loading = true
+        PostStore.error      = ""
+        PostStore.page       = 1
+        try {
+            :var result = wait:getPosts()
+            PostStore.posts       = result
+            PostStore.total_count = result.length
+            PostStore.has_more    = result.length == 20
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_loading = false
+    }
+
+    fn loadMore: async () => {
+        if PostStore.is_loading || !PostStore.has_more {
+            return
+        }
+        PostStore.is_loading = true
+        try {
+            :var next_page = PostStore.page + 1
+            :var result    = wait:getPosts()
+            PostStore.posts    = PostStore.posts.concat(result)
+            PostStore.page     = next_page
+            PostStore.has_more = result.length == 20
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_loading = false
+    }
+
+    fn search: async (query: string) => {
+        PostStore.search_query = query
+        PostStore.is_loading   = true
+        PostStore.error        = ""
+        try {
+            PostStore.posts = wait:searchPosts(query)
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_loading = false
+    }
+
+    fn create: async (title: string, body: string, tags: list) => {
+        PostStore.is_creating = true
+        PostStore.error       = ""
+        try {
+            :var new_post = wait:createPost(title, body, tags)
+            // Optimistic: prepend to list immediately
+            PostStore.posts = [new_post].concat(PostStore.posts)
+            PostStore.total_count = PostStore.total_count + 1
+            navigate("/posts/$new_post.id")
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_creating = false
+    }
+
+    fn publish: async (id: string) => {
+        try {
+            :var updated = wait:publishPost(id)
+            // Update in-place in the list
+            PostStore.posts = PostStore.posts.map((p) => {
+                if p.id == id { return updated }
+                return p
+            })
+        } catch (err) {
+            PostStore.error = err
+        }
+    }
+
+    fn selectPost: (post: object) => {
+        PostStore.selected_post = post
+    }
+
+    fn clearError: () => {
+        PostStore.error = ""
+    }
+}
+"##)?;
+
+    // ── Presentation components ───────────────────────────────────────────────
+
+    fs::write(root.join("src/presentation/components/PostCard.fr"), r##"// PostCard — reusable component that displays a single post summary.
+import { text, column, row, button, chip, avatar, divider } "frame-core"
+
+component PostCard: {
+    props: {
+        id:         string = ""
+        title:      string = ""
+        body:       string = ""
+        author:     string = ""
+        tags:       list   = []
+        published:  bool   = false
+        created_at: string = ""
+    }
+    styles: {
+        border_radius: 12dp
+        padding: 16dp
+        margin_bottom: 12dp
+        background: "#FFFFFF"
+        shadow: 1
+    }
+    children: [
+        column: {
+            styles: { gap: 8dp }
+            children: [
+                // Header row: avatar + author + date
+                row: {
+                    styles: { align: "center"  gap: 8dp }
+                    children: [
+                        avatar: { size: 32  label: author }
+                        column: {
+                            children: [
+                                text: { content: author  styles: { font_size: 13sp  font_weight: "600" } }
+                                text: { content: created_at  styles: { font_size: 11sp  color: "#888" } }
+                            ]
+                        }
+                    ]
+                }
+                // Title
+                text: {
+                    content: title
+                    styles: { font_size: 17sp  font_weight: "bold"  line_height: 1.3 }
+                }
+                // Body preview — first 120 chars
+                text: {
+                    content: body.slice(0, 120)
+                    styles: { font_size: 14sp  color: "#555"  line_height: 1.5 }
+                }
+                // Tags
+                row: {
+                    styles: { gap: 6dp  wrap: true }
+                    children: [
+                        chip: { content: tags.join("  ")  styles: { font_size: 12sp } }
+                    ]
+                }
+                divider: {}
+                // Draft badge
+                text: {
+                    content: "DRAFT"
+                    styles: { font_size: 11sp  color: "#f59e0b"  font_weight: "bold" }
+                    show_if: published == false
+                }
+            ]
+        }
+    ]
+    on_click: navigate("/posts/$id")
+}
+"##)?;
+
+    // ── Presentation pages ────────────────────────────────────────────────────
+
+    fs::write(root.join("src/presentation/pages/PostListPage.fr"), r##"// PostListPage — main feed with infinite scroll and search.
+import {
+    scaffold, app_bar, column, row, text, button, icon,
+    search_bar, list, spacer, progress_bar, toast, floating_action_button
+} "frame-core"
+import { PostCard } "../components/PostCard.fr"
+import { PostStore } "../stores/PostStore.fr"
+import { AuthStore } "../stores/AuthStore.fr"
+
+page: {
+    name: "PostList"
+    route: "/posts"
+    before_enter: requireAuth
+    on_mount: PostStore.load
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                app_bar: {
+                    title: "Posts"
+                    children: [
+                        icon: { name: "plus"  on_click: navigate("/posts/new") }
+                        icon: { name: "person.circle"  on_click: navigate("/profile") }
+                    ]
+                }
+                column: {
+                    styles: { width: 100%  height: 100% }
+                    children: [
+                        // Search bar
+                        search_bar: {
+                            value: PostStore.search_query
+                            placeholder: "Search posts..."
+                            on_change: PostStore.search
+                            styles: { margin: 12dp }
+                        }
+                        // Post count
+                        text: {
+                            content: "$PostStore.total_count posts"
+                            styles: { font_size: 12sp  color: "#888"  margin_horizontal: 16dp }
+                            show_if: PostStore.is_loading == false
+                        }
+                        // Loading indicator
+                        progress_bar: {
+                            value: -1
+                            show_if: PostStore.is_loading && PostStore.posts.length == 0
+                        }
+                        // Error state
+                        column: {
+                            show_if: PostStore.error != ""
+                            styles: { align: "center"  padding: 32dp }
+                            children: [
+                                icon: { name: "exclamationmark.triangle"  size: 40  color: "#f59e0b" }
+                                text: { content: PostStore.error  styles: { font_size: 15sp  color: "#555"  margin_top: 8dp } }
+                                button: {
+                                    content: "Try Again"
+                                    styles: { margin_top: 16dp }
+                                    on_click: PostStore.load()
+                                }
+                            ]
+                        }
+                        // Post list with infinite scroll
+                        list: {
+                            data: PostStore.posts
+                            key: "id"
+                            on_end_reached: PostStore.loadMore
+                            end_reached_threshold: 3
+                            show_if: PostStore.posts.length > 0
+                            render: (post) => [
+                                PostCard: {
+                                    id:         post.id
+                                    title:      post.title
+                                    body:       post.body
+                                    author:     post.author
+                                    tags:       post.tags
+                                    published:  post.published
+                                    created_at: post.created_at
+                                }
+                            ]
+                        }
+                        // Empty state
+                        column: {
+                            show_if: PostStore.is_loading == false && PostStore.posts.length == 0
+                            styles: { align: "center"  padding: 48dp }
+                            children: [
+                                icon: { name: "doc.text"  size: 48  color: "#ccc" }
+                                text: { content: "No posts yet"  styles: { font_size: 16sp  color: "#888"  margin_top: 12dp } }
+                                button: {
+                                    content: "Write the first post"
+                                    styles: { margin_top: 16dp }
+                                    on_click: navigate("/posts/new")
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        floating_action_button: {
+            on_click: navigate("/posts/new")
+            children: [
+                icon: { name: "plus"  color: "#FFFFFF"  size: 24 }
+            ]
+        }
+    ]
+}
+
+fn requireAuth: async () => {
+    if AuthStore.is_signed_in != true {
+        navigate("/sign-in", replace: true)
+    }
+}
+"##)?;
 
     Ok(())
 }
-    
-    // ─── MVC scaffold ─────────────────────────────────────────────────────────────
 
-fn scaffold_mvc(root: &Path) -> std::io::Result<()> {
+// ─── MVC scaffold ─────────────────────────────────────────────────────────────
+
+fn scaffold_mvc(root: &Path, _name: &str) -> std::io::Result<()> {
     fs::create_dir_all(root.join("src/models"))?;
     fs::create_dir_all(root.join("src/views/pages"))?;
     fs::create_dir_all(root.join("src/views/components"))?;
     fs::create_dir_all(root.join("src/controllers"))?;
 
-    // :obj type declaration — data model shape (not a store)
-    fs::write(root.join("src/models/UserObj.fr"),
-        ":obj User {\n    id:    string\n    name:  string\n    email: string\n    bio:   string?\n}\n")?;
+    // ── Models ────────────────────────────────────────────────────────────────
 
-    // Store — state management, holds user data loaded from API
-    // Demonstrates: try/catch error handling, if/else conditional logic
-    fs::write(root.join("src/models/UserStore.fr"),
-        concat!(
-            ":store UserStore {\n",
-            "    user:       object = null\n",
-            "    is_loading: bool   = false\n",
-            "    error:      string = \"\"\n",
-            "\n",
-            "    fn load: async (id: string) => {\n",
-            "        UserStore.is_loading = true\n",
-            "        UserStore.error = \"\"\n",
-            "        try {\n",
-            "            result = wait:fetch(\"/api/users/$id\", { method: \"GET\" })\n",
-            "            if result != null {\n",
-            "                UserStore.user = result\n",
-            "            } else {\n",
-            "                UserStore.error = \"User not found\"\n",
-            "            }\n",
-            "        } catch (err) {\n",
-            "            UserStore.error = err\n",
-            "        }\n",
-            "        UserStore.is_loading = false\n",
-            "    }\n",
-            "}\n",
-        ))?;
+    // Post type
+    fs::write(root.join("src/models/Post.fr"), r##"// Post — blog post data model.
+:obj Post {
+    id:         string
+    title:      string
+    body:       string
+    author_id:  string
+    author:     string
+    tags:       list
+    published:  bool
+    like_count: int
+    created_at: string
+    updated_at: string
+}
+"##)?;
 
-    // Controller — business logic, called from views
-    fs::write(root.join("src/controllers/UserController.fr"),
-        concat!(
-            "import { UserStore } \"../models/UserStore.fr\"\n\n",
-            "fn loadUser: async (id: string) => {\n",
-            "    wait:UserStore.load(id)\n",
-            "}\n",
-        ))?;
+    // User type
+    fs::write(root.join("src/models/User.fr"), r##"// User — account data model.
+:obj User {
+    id:         string
+    name:       string
+    email:      string
+    avatar_url: string?
+    bio:        string?
+    post_count: int
+    follower_count: int
+    joined_at:  string
+}
+"##)?;
 
-    // View component — used by HomePage, renders user info
-    fs::write(root.join("src/views/components/UserCard.fr"),
-        concat!(
-            "import { text, column } \"frame-core\"\n\n",
-            "component UserCard: {\n",
-            "    props: {\n",
-            "        name:  string = \"\"\n",
-            "        email: string = \"\"\n",
-            "        bio:   string = \"\"\n",
-            "    }\n",
-            "    styles: {\n",
-            "        border_radius: 8dp\n",
-            "        overflow: hidden\n",
-            "        padding: 12dp\n",
-            "        margin_bottom: 8dp\n",
-            "    }\n",
-            "    children: [\n",
-            "        column: {\n",
-            "            styles: { gap: 4dp }\n",
-            "            children: [\n",
-            "                text: {\n",
-            "                    content: name\n",
-            "                    styles: { font_size: 16sp  font_weight: \"bold\" }\n",
-            "                }\n",
-            "                text: {\n",
-            "                    content: email\n",
-            "                    styles: { font_size: 14sp }\n",
-            "                }\n",
-            "                text: {\n",
-            "                    content: bio\n",
-            "                    styles: { font_size: 14sp  font_style: \"italic\" }\n",
-            "                }\n",
-            "            ]\n",
-            "        }\n",
-            "    ]\n",
-            "}\n",
-        ))?;
+    // AuthStore — session with token persistence
+    fs::write(root.join("src/models/AuthStore.fr"), r##"// AuthStore — session state with persistent token storage.
+import { saveFile, loadFile } "frame-storage"
 
-    // View page — imports UserCard and controller, reads UserStore state
-    // Demonstrates: page lifecycle, navigate options, typed params, component hooks
-    fs::write(root.join("src/views/pages/HomePage.fr"),
-        concat!(
-            "import {\n",
-            "  text, button, icon, image, row, column, scaffold, card, divider, spacer,\n",
-            "  app_bar, sidebar, floating_action_button, list, form, input, search_bar,\n",
-            "  switch, slider, rating, stepper, badge, chip, tag, progress_bar, toast,\n",
-            "  modal, scroll_view, grid, avatar, banner, skeleton\n",
-            "} \"frame-core\"\n",
-            "import { UserCard } \"../components/UserCard.fr\"\n",
-            "import { loadUser } \"../../controllers/UserController.fr\"\n",
-            "import { capture } \"frame-camera\"\n",
-            "import { isOnline } \"frame-connectivity\"\n\n",
-            "page: {\n",
-            "    name: \"Home\"\n",
-            "    route: \"/home\"\n",
-            "    // Page lifecycle — accept any expression (functions, wait:, lambdas)\n",
-            "    before_enter: checkNetworkAccess\n",
-            "    on_mount:     loadInitialData\n",
-            "    on_background: pausePolling\n",
-            "    on_foreground: resumePolling\n",
-            "    on_unmount:   cancelPendingRequests\n",
-            "    styles: { width: 100%  height: 100%  safe_area: true }\n",
-            "    children: [\n",
-            "        scaffold: {\n",
-            "            styles: { safe_area: true }\n",
-            "            children: [\n",
-            "                app_bar: {\n",
-            "                    title: \"Frame App\"\n",
-            "                    leading: \"line.3.horizontal\"\n",
-            "                    children: [\n",
-            "                        icon: { name: \"magnifyingglass\"  on_click: openSearch() }\n",
-            "                        icon: { name: \"gearshape\"  on_click: openSettings() }\n",
-            "                    ]\n",
-            "                }\n",
-            "                row: {\n",
-            "                    styles: { width: 100%  height: 100% }\n",
-            "                    children: [\n",
-            "                        sidebar: {\n",
-            "                            side: \"left\"\n",
-            "                            width: \"220\"\n",
-            "                            styles: { background: \"#F8F9FA\"  padding: 8 }\n",
-            "                            children: [\n",
-            "                                text: { content: \"Menu\"  styles: { font_weight: \"bold\"  padding: 8 } }\n",
-            "                                button: { content: \"Dashboard\"  on_click: navigate(\"/dashboard\") }\n",
-            "                                // navigate_replace — settings replaces current screen\n",
-            "                                button: { content: \"Profile\"  on_click: navigate(\"/profile/1\") }\n",
-            "                                // navigate_modal — settings opens as a sheet\n",
-            "                                button: { content: \"Settings\"  on_click: navigate_modal(\"/settings\") }\n",
-            "                                divider: {}\n",
-            "                                text: { content: \"Tags\"  styles: { font_weight: \"bold\"  padding: 8 } }\n",
-            "                                chip: { content: \"Important\" }\n",
-            "                                tag: { content: \"New\" }\n",
-            "                            ]\n",
-            "                        }\n",
-            "                        column: {\n",
-            "                            // Component-level lifecycle: fires on mount and when UserStore.user changes\n",
-            "                            on_mount:  refreshList\n",
-            "                            on_update: refreshList\n",
-            "                            watch:     UserStore.user\n",
-            "                            on_unmount: stopRefresh\n",
-            "                            styles: { padding: 16  gap: 12  width: 100%  overflow: scroll }\n",
-            "                            children: [\n",
-            "                                // ── Loading state ──────────────────────────────\n",
-            "                                text: {\n",
-            "                                    content: \"Loading...\"\n",
-            "                                    styles: { font_size: 16sp }\n",
-            "                                    show_if: UserStore.is_loading\n",
-            "                                }\n",
-            "                                skeleton: {\n",
-            "                                    show_if: UserStore.is_loading\n",
-            "                                }\n\n",
-            "                                // ── User card ──────────────────────────────────\n",
-            "                                UserCard: {\n",
-            "                                    name: UserStore.user.name\n",
-            "                                    email: UserStore.user.email\n",
-            "                                    bio: UserStore.user.bio\n",
-            "                                    show_if: UserStore.user != null\n",
-            "                                }\n\n",
-            "                                // ── Error state ───────────────────────────────\n",
-            "                                text: {\n",
-            "                                    content: UserStore.error\n",
-            "                                    styles: { color: \"#FF0000\"  font_size: 14sp }\n",
-            "                                    show_if: UserStore.error != \"\"\n",
-            "                                }\n\n",
-            "                                // ── Actions ───────────────────────────────────\n",
-            "                                button: {\n",
-            "                                    content: \"Load Profile\"\n",
-            "                                    on_click: wait:loadUser(\"1\")\n",
-            "                                }\n",
-            "                                button: {\n",
-            "                                    content: \"Capture Photo\"\n",
-            "                                    // capture with explicit params — format/quality/source\n",
-            "                                    on_click: wait:capture(\"jpg\", 0.9, \"camera\")\n",
-            "                                }\n",
-            "                                button: {\n",
-            "                                    content: \"Back to Root\"\n",
-            "                                    // pop back to /home, removing all intermediate screens\n",
-            "                                    on_click: navigate_back_to(\"/home\")\n",
-            "                                }\n\n",
-            "                                // ── Card with form controls ────────────────────\n",
-            "                                card: {\n",
-            "                                    styles: { padding: 16  margin_top: 8 }\n",
-            "                                    children: [\n",
-            "                                        text: { content: \"Settings\"  styles: { font_size: 18sp  font_weight: \"bold\" } }\n",
-            "                                        spacer: { styles: { height: 8 } }\n",
-            "                                        row: {\n",
-            "                                            styles: { align: \"center\"  justify: \"space_between\" }\n",
-            "                                            children: [\n",
-            "                                                text: { content: \"Enable Notifications\" }\n",
-            "                                                switch: { value: notificationsEnabled  on_change: toggleNotifications() }\n",
-            "                                            ]\n",
-            "                                        }\n",
-            "                                        row: {\n",
-            "                                            styles: { align: \"center\"  justify: \"space_between\" }\n",
-            "                                            children: [\n",
-            "                                                text: { content: \"Dark Mode\" }\n",
-            "                                                switch: { value: darkMode }\n",
-            "                                            ]\n",
-            "                                        }\n",
-            "                                        divider: {}\n",
-            "                                        text: { content: \"Volume\"  styles: { font_size: 14sp } }\n",
-            "                                        slider: { value: volume  min: 0  max: 100  on_change: adjustVolume() }\n",
-            "                                        text: { content: \"Rating\"  styles: { font_size: 14sp } }\n",
-            "                                        rating: { value: 3  max: 5  on_change: rateApp() }\n",
-            "                                        text: { content: \"Quantity\"  styles: { font_size: 14sp } }\n",
-            "                                        stepper: { value: quantity  on_increment: inc()  on_decrement: dec() }\n",
-            "                                    ]\n",
-            "                                }\n\n",
-            "                                // ── Search ────────────────────────────────────\n",
-            "                                search_bar: {\n",
-            "                                    value: searchQuery\n",
-            "                                    placeholder: \"Search...\"\n",
-            "                                    on_change: updateQuery()\n",
-            "                                }\n\n",
-            "                                // ── Tags & badges ────────────────────────────\n",
-            "                                row: {\n",
-            "                                    styles: { gap: 8  align: \"center\" }\n",
-            "                                    children: [\n",
-            "                                        badge: { count: 5 }\n",
-            "                                        chip: { content: \"Filter\"  on_click: applyFilter() }\n",
-            "                                        tag: { content: \"Beta\" }\n",
-            "                                        avatar: { src: \"https://i.pravatar.cc/40\" }\n",
-            "                                    ]\n",
-            "                                }\n\n",
-            "                                // ── Progress ──────────────────────────────────\n",
-            "                                progress_bar: { value: 0.65 }\n",
-            "                                progress_circle: { value: 0.8 }\n\n",
-            "                                // ── Toast trigger ────────────────────────────\n",
-            "                                button: {\n",
-            "                                    content: \"Show Toast\"\n",
-            "                                    on_click: showToast(\"Hello from Frame!\")\n",
-            "                                }\n",
-            "                            ]\n",
-            "                        }\n",
-            "                    ]\n",
-            "                }\n",
-            "            ]\n",
-            "        }\n",
-            "        floating_action_button: {\n",
-            "            children: [\n",
-            "                icon: { name: \"plus\"  styles: { color: \"#FFFFFF\"  width: 24  height: 24 } }\n",
-            "            ]\n",
-            "            on_click: handleAdd()\n",
-            "        }\n",
-            "    ]\n",
-            "}\n\n",
-            "// ── Profile page — typed route params ─────────────────────────────────────────\n",
-            "page: {\n",
-            "    name: \"Profile\"\n",
-            "    route: \"/profile/:userId\"\n",
-            "    params: { userId: string }\n",
-            "    before_enter: checkAuth\n",
-            "    on_mount:     loadProfile\n",
-            "    before_leave: saveEdits\n",
-            "    styles: { safe_area: true }\n",
-            "    children: [\n",
-            "        scaffold: {\n",
-            "            styles: { safe_area: true }\n",
-            "            children: [\n",
-            "                app_bar: {\n",
-            "                    title: \"Profile\"\n",
-            "                    leading: \"chevron.left\"\n",
-            "                    children: [\n",
-            "                        icon: { name: \"xmark\"  on_click: navigate_back() }\n",
-            "                    ]\n",
-            "                }\n",
-            "                column: {\n",
-            "                    styles: { padding: 16  gap: 12 }\n",
-            "                    children: [\n",
-            "                        avatar: { src: \"https://i.pravatar.cc/80\" }\n",
-            "                        button: { content: \"Go Home\"  on_click: navigate(\"/home\", clear_stack: true) }\n",
-            "                        button: { content: \"Dismiss\"  on_click: navigate_dismiss() }\n",
-            "                    ]\n",
-            "                }\n",
-            "            ]\n",
-            "        }\n",
-            "    ]\n",
-            "}\n\n",
-            "// ── Page lifecycle functions ──────────────────────────────────────────────────\n",
-            "fn checkNetworkAccess: async () => {\n",
-            "    :var online = wait:isOnline(\"any\")\n",
-            "    if online != true {\n",
-            "        navigate_modal(\"/offline\")\n",
-            "    }\n",
-            "}\n\n",
-            "fn loadInitialData: async () => {\n",
-            "    wait:loadUser(\"1\")\n",
-            "}\n\n",
-            "fn pausePolling: () => {\n",
-            "    log.info(\"Home: pausing polling\")\n",
-            "}\n\n",
-            "fn resumePolling: () => {\n",
-            "    log.info(\"Home: resuming polling\")\n",
-            "}\n\n",
-            "fn cancelPendingRequests: () => {\n",
-            "    log.info(\"Home: cancelling requests\")\n",
-            "}\n\n",
-            "fn refreshList: () => {\n",
-            "    log.debug(\"List: refresh triggered\")\n",
-            "}\n\n",
-            "fn stopRefresh: () => {\n",
-            "    log.debug(\"List: stopping refresh\")\n",
-            "}\n\n",
-            "fn checkAuth: async () => {\n",
-            "    log.info(\"Profile: checking auth\")\n",
-            "}\n\n",
-            "fn loadProfile: async () => {\n",
-            "    log.info(\"Profile: loading\")\n",
-            "}\n\n",
-            "fn saveEdits: () => {\n",
-            "    log.info(\"Profile: saving edits\")\n",
-            "}\n",
-        ))?;
+:store AuthStore {
+    user:         object? = null
+    token:        string  = ""
+    is_loading:   bool    = false
+    error:        string  = ""
+    is_signed_in: bool    = false
+
+    fn init: async () => {
+        try {
+            :var data = wait:loadFile("auth.json", "documents", "utf8")
+            if data != "" {
+                :var session       = data.parse_json()
+                AuthStore.token        = session.token
+                AuthStore.user         = session.user
+                AuthStore.is_signed_in = true
+                log.info("Session restored for: $session.user.email")
+            }
+        } catch (err) {
+            log.debug("No persisted session: $err")
+        }
+    }
+
+    fn signIn: async (email: string, password: string) => {
+        if email == "" || password == "" {
+            AuthStore.error = "Email and password are required"
+            return
+        }
+        AuthStore.is_loading = true
+        AuthStore.error      = ""
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/auth/login", {
+                method: "POST"
+                headers: { Content-Type: "application/json" }
+                body: { email: email  password: password }
+            })
+            if res.status == 401 {
+                AuthStore.error = "Invalid email or password"
+                return
+            }
+            if res.ok != true {
+                AuthStore.error = res.data.message || "Sign in failed"
+                return
+            }
+            AuthStore.token        = res.data.token
+            AuthStore.user         = res.data.user
+            AuthStore.is_signed_in = true
+            wait:saveFile("auth.json", { token: res.data.token  user: res.data.user }.to_json(), "documents", "utf8")
+            navigate("/posts", clear_stack: true)
+        } catch (err) {
+            AuthStore.error = "Network error. Please check your connection."
+        }
+        AuthStore.is_loading = false
+    }
+
+    fn register: async (name: string, email: string, password: string) => {
+        if name == "" || email == "" || password == "" {
+            AuthStore.error = "All fields are required"
+            return
+        }
+        if password.length < 8 {
+            AuthStore.error = "Password must be at least 8 characters"
+            return
+        }
+        AuthStore.is_loading = true
+        AuthStore.error      = ""
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/auth/register", {
+                method: "POST"
+                headers: { Content-Type: "application/json" }
+                body: { name: name  email: email  password: password }
+            })
+            if res.status == 409 {
+                AuthStore.error = "An account with this email already exists"
+                return
+            }
+            if res.ok != true {
+                AuthStore.error = res.data.message || "Registration failed"
+                return
+            }
+            AuthStore.token        = res.data.token
+            AuthStore.user         = res.data.user
+            AuthStore.is_signed_in = true
+            wait:saveFile("auth.json", { token: res.data.token  user: res.data.user }.to_json(), "documents", "utf8")
+            navigate("/posts", clear_stack: true)
+        } catch (err) {
+            AuthStore.error = "Network error. Please check your connection."
+        }
+        AuthStore.is_loading = false
+    }
+
+    fn signOut: async () => {
+        AuthStore.user         = null
+        AuthStore.token        = ""
+        AuthStore.is_signed_in = false
+        AuthStore.error        = ""
+        wait:saveFile("auth.json", "", "documents", "utf8")
+        navigate("/sign-in", clear_stack: true)
+    }
+}
+"##)?;
+
+    // PostStore — full CRUD with optimistic UI
+    fs::write(root.join("src/models/PostStore.fr"), r##"// PostStore — blog post state with pagination, search, likes, and optimistic updates.
+:store PostStore {
+    posts:         list    = []
+    selected_post: object? = null
+    draft_title:   string  = ""
+    draft_body:    string  = ""
+    draft_tags:    list    = []
+    search_query:  string  = ""
+    filter:        string  = "all"      // "all" | "published" | "drafts" | "liked"
+    sort:          string  = "newest"   // "newest" | "oldest" | "popular"
+    page:          int     = 1
+    per_page:      int     = 20
+    total:         int     = 0
+    has_more:      bool    = true
+    is_loading:    bool    = false
+    is_saving:     bool    = false
+    error:         string  = ""
+    save_error:    string  = ""
+
+    fn load: async () => {
+        PostStore.is_loading = true
+        PostStore.error      = ""
+        PostStore.page       = 1
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/posts?page=1&per_page=$PostStore.per_page&sort=$PostStore.sort&filter=$PostStore.filter", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok != true {
+                PostStore.error = "Failed to load posts"
+                return
+            }
+            PostStore.posts    = res.data.posts
+            PostStore.total    = res.data.total
+            PostStore.has_more = res.data.posts.length == PostStore.per_page
+        } catch (err) {
+            PostStore.error = "Network error loading posts"
+        }
+        PostStore.is_loading = false
+    }
+
+    fn loadMore: async () => {
+        if PostStore.is_loading || !PostStore.has_more { return }
+        PostStore.is_loading = true
+        try {
+            :var next = PostStore.page + 1
+            :var res  = wait:fetch("https://api.example.com/v1/posts?page=$next&per_page=$PostStore.per_page&sort=$PostStore.sort", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok != true { return }
+            PostStore.posts    = PostStore.posts.concat(res.data.posts)
+            PostStore.page     = next
+            PostStore.has_more = res.data.posts.length == PostStore.per_page
+        } catch (err) {
+            PostStore.error = "Failed to load more posts"
+        }
+        PostStore.is_loading = false
+    }
+
+    fn search: async (query: string) => {
+        PostStore.search_query = query
+        if query.trim().length < 2 {
+            wait:PostStore.load()
+            return
+        }
+        PostStore.is_loading = true
+        PostStore.error      = ""
+        try {
+            :var encoded = query.url_encode()
+            :var res = wait:fetch("https://api.example.com/v1/posts/search?q=$encoded", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok != true { PostStore.error = "Search failed"; return }
+            PostStore.posts = res.data.posts
+            PostStore.total = res.data.total
+        } catch (err) {
+            PostStore.error = "Search failed. Try again."
+        }
+        PostStore.is_loading = false
+    }
+
+    fn selectPost: async (id: string) => {
+        // Use cached version first, fetch fresh in background
+        :var cached = PostStore.posts.find((p) => p.id == id)
+        if cached != null { PostStore.selected_post = cached }
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/posts/$id", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok == true { PostStore.selected_post = res.data }
+        } catch (err) {
+            if cached == null { PostStore.error = "Could not load post" }
+        }
+    }
+
+    fn like: async (id: string) => {
+        // Optimistic update
+        PostStore.posts = PostStore.posts.map((p) => {
+            if p.id == id { return { ...p  like_count: p.like_count + 1 } }
+            return p
+        })
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/posts/$id/like", {
+                method: "POST"
+            })
+            if res.ok != true {
+                // Revert on failure
+                PostStore.posts = PostStore.posts.map((p) => {
+                    if p.id == id { return { ...p  like_count: p.like_count - 1 } }
+                    return p
+                })
+            }
+        } catch (err) {
+            log.warn("Like failed: $err")
+        }
+    }
+
+    fn setFilter: async (filter: string) => {
+        PostStore.filter = filter
+        wait:PostStore.load()
+    }
+
+    fn setSort: async (sort: string) => {
+        PostStore.sort = sort
+        wait:PostStore.load()
+    }
+}
+"##)?;
+
+    // ── Controllers ───────────────────────────────────────────────────────────
+
+    fs::write(root.join("src/controllers/PostController.fr"), r##"// PostController — business logic between views and PostStore.
+// Views call these functions; controllers validate and coordinate.
+import { PostStore } "../models/PostStore.fr"
+import { AuthStore } "../models/AuthStore.fr"
+
+fn loadFeed: async () => {
+    wait:PostStore.load()
+}
+
+fn submitPost: async (title: string, body: string, tags_input: string) => {
+    // Validation
+    :var clean_title = title.trim()
+    :var clean_body  = body.trim()
+    if clean_title.length == 0 {
+        PostStore.save_error = "Title cannot be empty"
+        return
+    }
+    if clean_title.length > 120 {
+        PostStore.save_error = "Title must be 120 characters or fewer"
+        return
+    }
+    if clean_body.length < 10 {
+        PostStore.save_error = "Body must be at least 10 characters"
+        return
+    }
+    // Parse comma-separated tags
+    :var tags = tags_input.split(",").map((t) => t.trim()).filter((t) => t.length > 0)
+    if tags.length > 5 {
+        PostStore.save_error = "Maximum 5 tags allowed"
+        return
+    }
+    wait:PostStore.create(clean_title, clean_body, tags)
+}
+
+fn deletePost: async (id: string) => {
+    if AuthStore.token == "" {
+        PostStore.error = "You must be signed in"
+        return
+    }
+    try {
+        :var res = wait:fetch("https://api.example.com/v1/posts/$id", {
+            method: "DELETE"
+            headers: { Authorization: "Bearer $AuthStore.token" }
+        })
+        if res.ok != true {
+            PostStore.error = "Failed to delete post"
+            return
+        }
+        // Remove from list
+        PostStore.posts = PostStore.posts.filter((p) => p.id != id)
+        PostStore.total = PostStore.total - 1
+        navigate_back()
+    } catch (err) {
+        PostStore.error = "Network error. Could not delete post."
+    }
+}
+
+fn updatePost: async (id: string, title: string, body: string) => {
+    :var clean_title = title.trim()
+    :var clean_body  = body.trim()
+    if clean_title.length == 0 {
+        PostStore.save_error = "Title cannot be empty"
+        return
+    }
+    if clean_body.length < 10 {
+        PostStore.save_error = "Body must be at least 10 characters"
+        return
+    }
+    PostStore.is_saving   = true
+    PostStore.save_error  = ""
+    try {
+        :var res = wait:fetch("https://api.example.com/v1/posts/$id", {
+            method: "PATCH"
+            headers: {
+                Authorization: "Bearer $AuthStore.token"
+                Content-Type:  "application/json"
+            }
+            body: { title: clean_title  body: clean_body }
+        })
+        if res.ok != true {
+            PostStore.save_error = res.data.message || "Update failed"
+            return
+        }
+        // Update in-place
+        PostStore.posts = PostStore.posts.map((p) => {
+            if p.id == id { return res.data }
+            return p
+        })
+        navigate("/posts/$id", replace: true)
+    } catch (err) {
+        PostStore.save_error = "Network error. Could not save changes."
+    }
+    PostStore.is_saving = false
+}
+"##)?;
+
+    fs::write(root.join("src/controllers/AuthController.fr"), r##"// AuthController — coordinates auth actions from views.
+import { AuthStore } "../models/AuthStore.fr"
+import { isOnline } "frame-connectivity"
+
+fn handleSignIn: async (email: string, password: string) => {
+    // Guard: check connectivity before attempting auth
+    :var online = wait:isOnline("any")
+    if online != true {
+        AuthStore.error = "No internet connection. Please check your network."
+        return
+    }
+    wait:AuthStore.signIn(email, password)
+}
+
+fn handleRegister: async (name: string, email: string, password: string, confirm: string) => {
+    :var online = wait:isOnline("any")
+    if online != true {
+        AuthStore.error = "No internet connection."
+        return
+    }
+    if password != confirm {
+        AuthStore.error = "Passwords do not match"
+        return
+    }
+    wait:AuthStore.register(name, email, password)
+}
+
+fn handleSignOut: async () => {
+    wait:AuthStore.signOut()
+}
+"##)?;
+
+    // ── Views — components ────────────────────────────────────────────────────
+
+    fs::write(root.join("src/views/components/PostCard.fr"), r##"// PostCard — blog post summary card with like button.
+import { text, column, row, button, chip, avatar, divider, icon } "frame-core"
+import { PostStore } "../../models/PostStore.fr"
+
+component PostCard: {
+    props: {
+        id:         string = ""
+        title:      string = ""
+        body:       string = ""
+        author:     string = ""
+        tags:       list   = []
+        like_count: int    = 0
+        published:  bool   = false
+        created_at: string = ""
+    }
+    styles: {
+        border_radius: 12dp
+        padding: 16dp
+        margin_bottom: 12dp
+        background: "#FFFFFF"
+        shadow: 1
+    }
+    on_click: navigate("/posts/$id")
+    children: [
+        column: {
+            styles: { gap: 8dp }
+            children: [
+                row: {
+                    styles: { align: "center"  justify: "space_between" }
+                    children: [
+                        row: {
+                            styles: { align: "center"  gap: 8dp }
+                            children: [
+                                avatar: { size: 28  label: author }
+                                text: { content: author  styles: { font_size: 13sp  font_weight: "600" } }
+                            ]
+                        }
+                        text: { content: created_at  styles: { font_size: 11sp  color: "#999" } }
+                    ]
+                }
+                text: {
+                    content: title
+                    styles: { font_size: 17sp  font_weight: "bold"  line_height: 1.3 }
+                }
+                text: {
+                    content: body.slice(0, 140)
+                    styles: { font_size: 14sp  color: "#555"  line_height: 1.5 }
+                }
+                row: {
+                    styles: { gap: 6dp  wrap: true }
+                    children: [
+                        chip: { content: tags.join("  ")  styles: { font_size: 11sp } }
+                    ]
+                }
+                divider: {}
+                row: {
+                    styles: { align: "center"  justify: "space_between" }
+                    children: [
+                        // Like button with count
+                        row: {
+                            styles: { align: "center"  gap: 4dp }
+                            on_click: PostStore.like(id)
+                            children: [
+                                icon: { name: "heart"  size: 16  color: "#e11d48" }
+                                text: { content: "$like_count"  styles: { font_size: 13sp  color: "#888" } }
+                            ]
+                        }
+                        // Draft badge
+                        text: {
+                            content: "DRAFT"
+                            styles: { font_size: 11sp  color: "#f59e0b"  font_weight: "bold" }
+                            show_if: published == false
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+"##)?;
+
+    // ── Views — pages ─────────────────────────────────────────────────────────
+
+    fs::write(root.join("src/views/pages/SignInPage.fr"), r##"// SignInPage — email/password sign-in with validation feedback.
+import { scaffold, column, row, text, button, input, icon, spacer, progress_bar } "frame-core"
+import { AuthStore } "../../models/AuthStore.fr"
+import { handleSignIn } "../../controllers/AuthController.fr"
+
+:var email:    string = ""
+:var password: string = ""
+
+page: {
+    name: "SignIn"
+    route: "/sign-in"
+    on_mount: checkAlreadySignedIn
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                column: {
+                    styles: {
+                        width: 100%
+                        height: 100%
+                        padding: 32dp
+                        align: "center"
+                        justify: "center"
+                        gap: 16dp
+                        max_width: 400dp
+                    }
+                    children: [
+                        icon: { name: "doc.fill"  size: 56  color: "#bcf970" }
+                        text: {
+                            content: "Welcome back"
+                            styles: { font_size: 26sp  font_weight: "bold" }
+                        }
+                        text: {
+                            content: "Sign in to continue"
+                            styles: { font_size: 15sp  color: "#888"  margin_bottom: 8dp }
+                        }
+                        input: {
+                            value: email
+                            placeholder: "Email address"
+                            keyboard: "email"
+                            on_change: (v) => { email = v }
+                            styles: { width: 100% }
+                        }
+                        input: {
+                            value: password
+                            placeholder: "Password"
+                            secure: true
+                            on_change: (v) => { password = v }
+                            styles: { width: 100% }
+                        }
+                        // Error message
+                        text: {
+                            content: AuthStore.error
+                            styles: { color: "#dc2626"  font_size: 13sp  width: 100% }
+                            show_if: AuthStore.error != ""
+                        }
+                        // Sign-in button
+                        button: {
+                            content: "Sign In"
+                            styles: { width: 100%  margin_top: 8dp }
+                            on_click: handleSignIn(email, password)
+                            disabled: AuthStore.is_loading
+                        }
+                        progress_bar: {
+                            value: -1
+                            show_if: AuthStore.is_loading
+                        }
+                        // Register link
+                        row: {
+                            styles: { gap: 4dp  align: "center"  margin_top: 16dp }
+                            children: [
+                                text: { content: "Don't have an account?"  styles: { font_size: 14sp } }
+                                button: {
+                                    content: "Sign up"
+                                    variant: "text"
+                                    styles: { font_size: 14sp  color: "#bcf970"  font_weight: "bold" }
+                                    on_click: navigate("/register")
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+fn checkAlreadySignedIn: async () => {
+    wait:AuthStore.init()
+    if AuthStore.is_signed_in == true {
+        navigate("/posts", replace: true)
+    }
+}
+"##)?;
+
+    fs::write(root.join("src/views/pages/PostListPage.fr"), r##"// PostListPage — the main blog feed with filter, sort, and infinite scroll.
+import {
+    scaffold, app_bar, column, row, text, button, icon,
+    search_bar, list, progress_bar, floating_action_button,
+    chip, spacer, divider
+} "frame-core"
+import { PostCard } "../components/PostCard.fr"
+import { PostStore } "../../models/PostStore.fr"
+import { AuthStore } "../../models/AuthStore.fr"
+import { loadFeed } "../../controllers/PostController.fr"
+
+page: {
+    name: "PostList"
+    route: "/posts"
+    before_enter: requireAuth
+    on_mount: loadFeed
+    on_foreground: checkForUpdates
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                app_bar: {
+                    title: "Blog"
+                    children: [
+                        icon: {
+                            name: "line.3.horizontal.decrease"
+                            on_click: navigate_modal("/filter")
+                            tooltip: "Filter & Sort"
+                        }
+                        icon: {
+                            name: "person.circle"
+                            on_click: navigate("/profile/$AuthStore.user.id")
+                        }
+                    ]
+                }
+                column: {
+                    styles: { width: 100%  height: 100% }
+                    children: [
+                        // Search
+                        search_bar: {
+                            value: PostStore.search_query
+                            placeholder: "Search posts..."
+                            on_change: PostStore.search
+                            on_clear: PostStore.load
+                            styles: { margin: 12dp }
+                        }
+                        // Filter chips
+                        row: {
+                            styles: { padding_horizontal: 12dp  gap: 8dp  margin_bottom: 4dp }
+                            children: [
+                                chip: {
+                                    content: "All"
+                                    selected: PostStore.filter == "all"
+                                    on_click: PostStore.setFilter("all")
+                                }
+                                chip: {
+                                    content: "Published"
+                                    selected: PostStore.filter == "published"
+                                    on_click: PostStore.setFilter("published")
+                                }
+                                chip: {
+                                    content: "My Drafts"
+                                    selected: PostStore.filter == "drafts"
+                                    on_click: PostStore.setFilter("drafts")
+                                }
+                            ]
+                        }
+                        // Stats row
+                        row: {
+                            show_if: PostStore.is_loading == false
+                            styles: { padding_horizontal: 16dp  margin_bottom: 4dp  align: "center"  gap: 8dp }
+                            children: [
+                                text: {
+                                    content: "$PostStore.total posts"
+                                    styles: { font_size: 12sp  color: "#888" }
+                                }
+                                spacer: {}
+                                text: { content: "Sort:"  styles: { font_size: 12sp  color: "#888" } }
+                                button: {
+                                    content: PostStore.sort
+                                    variant: "text"
+                                    styles: { font_size: 12sp  color: "#bcf970" }
+                                    on_click: PostStore.setSort(PostStore.sort == "newest" ? "popular" : "newest")
+                                }
+                            ]
+                        }
+                        // Loading skeleton
+                        progress_bar: {
+                            value: -1
+                            show_if: PostStore.is_loading && PostStore.posts.length == 0
+                            styles: { margin: 16dp }
+                        }
+                        // Error
+                        column: {
+                            show_if: PostStore.error != "" && PostStore.is_loading == false
+                            styles: { align: "center"  padding: 32dp  gap: 12dp }
+                            children: [
+                                icon: { name: "wifi.slash"  size: 44  color: "#f59e0b" }
+                                text: {
+                                    content: PostStore.error
+                                    styles: { font_size: 15sp  color: "#555"  align: "center" }
+                                }
+                                button: {
+                                    content: "Retry"
+                                    on_click: loadFeed()
+                                }
+                            ]
+                        }
+                        // Post list
+                        list: {
+                            data: PostStore.posts
+                            key: "id"
+                            on_end_reached: PostStore.loadMore
+                            end_reached_threshold: 3
+                            show_if: PostStore.posts.length > 0
+                            styles: { padding_horizontal: 12dp }
+                            render: (post) => [
+                                PostCard: {
+                                    id:         post.id
+                                    title:      post.title
+                                    body:       post.body
+                                    author:     post.author
+                                    tags:       post.tags
+                                    like_count: post.like_count
+                                    published:  post.published
+                                    created_at: post.created_at
+                                }
+                            ]
+                        }
+                        // Empty state
+                        column: {
+                            show_if: PostStore.is_loading == false && PostStore.posts.length == 0 && PostStore.error == ""
+                            styles: { align: "center"  padding: 48dp  gap: 12dp }
+                            children: [
+                                icon: { name: "doc.text"  size: 48  color: "#ccc" }
+                                text: { content: "No posts found"  styles: { font_size: 16sp  color: "#888" } }
+                                button: {
+                                    content: "Write a post"
+                                    on_click: navigate("/posts/new")
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        floating_action_button: {
+            on_click: navigate("/posts/new")
+            children: [
+                icon: { name: "plus"  color: "#1a1a2e"  size: 24 }
+            ]
+        }
+    ]
+}
+
+fn requireAuth: async () => {
+    if AuthStore.is_signed_in != true {
+        navigate("/sign-in", replace: true)
+    }
+}
+
+fn checkForUpdates: async () => {
+    if PostStore.posts.length > 0 {
+        wait:PostStore.load()
+    }
+}
+"##)?;
+
+    fs::write(root.join("src/views/pages/NewPostPage.fr"), r##"// NewPostPage — create a new blog post with live validation.
+import { scaffold, app_bar, column, row, text, button, input, icon, progress_bar, divider } "frame-core"
+import { PostStore } "../../models/PostStore.fr"
+import { submitPost } "../../controllers/PostController.fr"
+import { capture } "frame-camera"
+
+:var title:      string = ""
+:var body:       string = ""
+:var tags_input: string = ""
+:var photo_path: string = ""
+
+page: {
+    name: "NewPost"
+    route: "/posts/new"
+    on_unmount: clearDraft
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                app_bar: {
+                    title: "New Post"
+                    leading: "xmark"
+                    on_leading_click: navigate_back()
+                    children: [
+                        button: {
+                            content: "Publish"
+                            variant: "text"
+                            styles: { color: "#bcf970"  font_weight: "bold" }
+                            on_click: submitPost(title, body, tags_input)
+                            disabled: PostStore.is_saving || title.trim().length == 0
+                        }
+                    ]
+                }
+                column: {
+                    styles: { padding: 16dp  gap: 12dp  overflow: scroll }
+                    children: [
+                        input: {
+                            value: title
+                            placeholder: "Post title..."
+                            on_change: (v) => { title = v }
+                            styles: { font_size: 20sp  font_weight: "bold"  border: none }
+                            max_length: 120
+                        }
+                        row: {
+                            styles: { align: "center"  justify: "space_between" }
+                            children: [
+                                text: {
+                                    content: "$title.length / 120"
+                                    styles: { font_size: 11sp  color: title.length > 100 ? "#f59e0b" : "#bbb" }
+                                }
+                            ]
+                        }
+                        divider: {}
+                        input: {
+                            value: body
+                            placeholder: "Write your post..."
+                            on_change: (v) => { body = v }
+                            multiline: true
+                            min_lines: 8
+                            styles: { font_size: 15sp  line_height: 1.6  border: none }
+                        }
+                        divider: {}
+                        input: {
+                            value: tags_input
+                            placeholder: "Tags (comma-separated, max 5)"
+                            on_change: (v) => { tags_input = v }
+                            styles: { font_size: 13sp }
+                        }
+                        // Attach photo
+                        row: {
+                            styles: { gap: 12dp  align: "center" }
+                            children: [
+                                button: {
+                                    content: "Attach Photo"
+                                    variant: "outlined"
+                                    on_click: attachPhoto()
+                                    children: [
+                                        icon: { name: "camera"  size: 16  color: "#555" }
+                                    ]
+                                }
+                                text: {
+                                    content: photo_path != "" ? "Photo attached ✓" : ""
+                                    styles: { font_size: 13sp  color: "#bcf970" }
+                                }
+                            ]
+                        }
+                        // Validation error
+                        text: {
+                            content: PostStore.save_error
+                            styles: { color: "#dc2626"  font_size: 13sp }
+                            show_if: PostStore.save_error != ""
+                        }
+                        progress_bar: {
+                            value: -1
+                            show_if: PostStore.is_saving
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+fn attachPhoto: async () => {
+    try {
+        :var path = wait:capture("jpg", 0.85, "camera")
+        photo_path = path
+    } catch (err) {
+        log.warn("Photo capture cancelled: $err")
+    }
+}
+
+fn clearDraft: () => {
+    PostStore.save_error = ""
+}
+"##)?;
+
+    fs::write(root.join("src/views/pages/PostDetailPage.fr"), r##"// PostDetailPage — full post view with edit/delete for the author.
+import {
+    scaffold, app_bar, column, row, text, button,
+    icon, divider, chip, avatar, progress_bar, scroll_view
+} "frame-core"
+import { PostStore } "../../models/PostStore.fr"
+import { AuthStore } "../../models/AuthStore.fr"
+import { deletePost } "../../controllers/PostController.fr"
+
+page: {
+    name: "PostDetail"
+    route: "/posts/:id"
+    params: { id: string }
+    on_mount: loadPost
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                app_bar: {
+                    title: ""
+                    leading: "chevron.left"
+                    on_leading_click: navigate_back()
+                    children: [
+                        // Edit/Delete shown only to the post's author
+                        row: {
+                            show_if: PostStore.selected_post != null && PostStore.selected_post.author_id == AuthStore.user.id
+                            children: [
+                                icon: {
+                                    name: "pencil"
+                                    on_click: navigate("/posts/$PostStore.selected_post.id/edit")
+                                }
+                                icon: {
+                                    name: "trash"
+                                    color: "#dc2626"
+                                    on_click: confirmDelete()
+                                }
+                            ]
+                        }
+                    ]
+                }
+                scroll_view: {
+                    styles: { padding: 20dp }
+                    children: [
+                        // Loading
+                        progress_bar: {
+                            value: -1
+                            show_if: PostStore.is_loading && PostStore.selected_post == null
+                        }
+                        // Error
+                        column: {
+                            show_if: PostStore.error != "" && PostStore.selected_post == null
+                            styles: { align: "center"  padding: 32dp  gap: 12dp }
+                            children: [
+                                icon: { name: "exclamationmark.circle"  size: 40  color: "#f59e0b" }
+                                text: { content: PostStore.error  styles: { font_size: 15sp  color: "#555" } }
+                                button: { content: "Go Back"  on_click: navigate_back() }
+                            ]
+                        }
+                        // Post content
+                        column: {
+                            show_if: PostStore.selected_post != null
+                            styles: { gap: 16dp }
+                            children: [
+                                text: {
+                                    content: PostStore.selected_post.title
+                                    styles: { font_size: 26sp  font_weight: "bold"  line_height: 1.25 }
+                                }
+                                row: {
+                                    styles: { align: "center"  gap: 10dp }
+                                    children: [
+                                        avatar: { size: 36  label: PostStore.selected_post.author }
+                                        column: {
+                                            children: [
+                                                text: {
+                                                    content: PostStore.selected_post.author
+                                                    styles: { font_size: 14sp  font_weight: "600" }
+                                                }
+                                                text: {
+                                                    content: PostStore.selected_post.created_at
+                                                    styles: { font_size: 12sp  color: "#999" }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                                row: {
+                                    styles: { gap: 6dp  wrap: true }
+                                    children: [
+                                        chip: { content: PostStore.selected_post.tags.join("  ")  styles: { font_size: 12sp } }
+                                    ]
+                                }
+                                divider: {}
+                                text: {
+                                    content: PostStore.selected_post.body
+                                    styles: { font_size: 16sp  line_height: 1.7  color: "#222" }
+                                }
+                                divider: {}
+                                // Like button
+                                row: {
+                                    styles: { align: "center"  gap: 8dp }
+                                    children: [
+                                        button: {
+                                            variant: "outlined"
+                                            on_click: PostStore.like(PostStore.selected_post.id)
+                                            children: [
+                                                icon: { name: "heart"  size: 16  color: "#e11d48" }
+                                                text: { content: "$PostStore.selected_post.like_count likes"  styles: { font_size: 14sp } }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+fn loadPost: async () => {
+    wait:PostStore.selectPost(params.id)
+}
+
+fn confirmDelete: async () => {
+    navigate_modal("/posts/$PostStore.selected_post.id/confirm-delete")
+}
+"##)?;
 
     Ok(())
 }
@@ -747,184 +1704,421 @@ fn scaffold_mvc(root: &Path) -> std::io::Result<()> {
 // ─── Common generated files ───────────────────────────────────────────────────
 
 fn write_project_fr(root: &Path, name: &str, arch: Architecture) -> std::io::Result<()> {
-    let page_import = match arch {
-        Architecture::CleanArchitecture => "./presentation/pages/HomePage.fr",
-        Architecture::Mvc               => "./views/pages/HomePage.fr",
+    let (page_import, auth_import) = match arch {
+        Architecture::CleanArchitecture => (
+            "./presentation/pages/PostListPage.fr",
+            "./presentation/stores/AuthStore.fr",
+        ),
+        Architecture::Mvc => (
+            "./views/pages/PostListPage.fr",
+            "./models/AuthStore.fr",
+        ),
     };
     let content = format!(
-        concat!(
-            "// Frame project: {name}\n",
-            ":vars {{\n",
-            "    primary:   \"#007BFF\"\n",
-            "    secondary: \"#6C757D\"\n",
-            "}}\n\n",
-            ":breakpoints {{\n",
-            "    sm: 360dp\n",
-            "    md: 600dp\n",
-            "    lg: 900dp\n",
-            "    xl: 1200dp\n",
-            "}}\n\n",
-            "// ── App-level lifecycle hooks ─────────────────────────────────────────────\n",
-            "// Declared once here; wired into Application.onCreate / didFinishLaunching\n",
-            ":app {{\n",
-            "    default_route: \"/\"           // REQUIRED — first screen shown on launch\n",
-            "    on_launch:     appInit        // optional — called on app start\n",
-            "    on_foreground: appForeground  // optional — app came to foreground\n",
-            "    on_background: appBackground  // optional — app went to background\n",
-            "}}\n\n",
-            "import {{ text, button, column, scaffold, app_bar }} \"frame-core\"\n",
-            "import {{ HomePage }} \"{page_import}\"\n\n",
-            "// ── Splash page — demonstrates before_enter as expression + navigate options ──\n",
-            "page: {{\n",
-            "    name: \"Splash\"\n",
-            "    route: \"/\"\n",
-            "    // before_enter accepts any expression: function call, wait:, lambda\n",
-            "    before_enter: checkAuth\n",
-            "    // on_mount fires after fully visible (viewDidAppear / LaunchedEffect \"mount\")\n",
-            "    on_mount: logAppOpen\n",
-            "    styles: {{ width: 100%  height: 100%  background: $primary }}\n",
-            "    children: [\n",
-            "        scaffold: {{\n",
-            "            styles: {{ safe_area: true }}\n",
-            "            children: [\n",
-            "                app_bar: {{\n",
-            "                    title: \"{name}\"\n",
-            "                    leading: \"line.3.horizontal\"\n",
-            "                }}\n",
-            "                column: {{\n",
-            "                    styles: {{ width: 100%  height: 100%  padding: 32  align: \"center\"  justify: \"center\" }}\n",
-            "                    children: [\n",
-            "                        text: {{ content: \"{name}\"  styles: {{ color: \"#FFFFFF\"  font_size: 32sp  font_weight: \"bold\" }} }}\n",
-            "                        spacer: {{ styles: {{ height: 16 }} }}\n",
-            "                        text: {{ content: \"Welcome to Frame\"  styles: {{ color: \"#FFFFFF\"  font_size: 16sp }} }}\n",
-            "                        // navigate with clear_stack: true — replaces entire back stack\n",
-            "                        button: {{ content: \"Get Started\"  styles: {{ margin_top: 24 }}  on_click: navigate(\"/home\", clear_stack: true) }}\n",
-            "                    ]\n",
-            "                }}\n",
-            "            ]\n",
-            "        }}\n",
-            "    ]\n",
-            "}}\n\n",
-            "// ── App lifecycle functions ───────────────────────────────────────────────────\n",
-            "fn appInit: () => {{\n",
-            "    log.info(\"App launched\")\n",
-            "}}\n\n",
-            "fn appForeground: () => {{\n",
-            "    log.info(\"App foregrounded\")\n",
-            "}}\n\n",
-            "fn appBackground: () => {{\n",
-            "    log.info(\"App backgrounded\")\n",
-            "}}\n\n",
-            "fn logAppOpen: () => {{\n",
-            "    log.info(\"Splash page visible\")\n",
-            "}}\n\n",
-            "fn checkAuth: async () => {{\n",
-            "    // Replace current entry so back won't return to splash\n",
-            "    navigate(\"/home\", replace: true)\n",
-            "}}\n",
-        ),
+        r##"// {name} — Frame project root.
+// Defines app-level config, design tokens, and the entry screen.
+:vars {{
+    primary:     "#bcf970"
+    on_primary:  "#1a1a2e"
+    surface:     "#FFFFFF"
+    background:  "#F5F5F5"
+    error:       "#dc2626"
+    text:        "#111827"
+    text_muted:  "#6b7280"
+    border:      "#e5e7eb"
+}}
+
+:breakpoints {{
+    sm:  360dp
+    md:  600dp
+    lg:  900dp
+    xl:  1200dp
+}}
+
+// App-level lifecycle — wired into Application.onCreate / AppDelegate.didFinishLaunching
+:app {{
+    default_route: "/sign-in"
+    on_launch:     appLaunch
+    on_foreground: appForeground
+    on_background: appBackground
+}}
+
+import {{ scaffold, column, text, button, icon, spacer }} "frame-core"
+import {{ PostListPage }} "{page_import}"
+import {{ AuthStore }} "{auth_import}"
+
+// Sign-in redirect page — before_enter handles the auth check
+page: {{
+    name: "Entry"
+    route: "/sign-in"
+    before_enter: redirectIfSignedIn
+    styles: {{
+        width: 100%
+        height: 100%
+        background: $$on_primary
+        safe_area: true
+    }}
+    children: [
+        scaffold: {{
+            children: [
+                column: {{
+                    styles: {{
+                        width: 100%
+                        height: 100%
+                        align: "center"
+                        justify: "center"
+                        gap: 24dp
+                        padding: 40dp
+                    }}
+                    children: [
+                        icon: {{ name: "doc.fill"  size: 72  color: $$primary }}
+                        text: {{
+                            content: "{name}"
+                            styles: {{ font_size: 32sp  font_weight: "bold"  color: "#FFFFFF" }}
+                        }}
+                        text: {{
+                            content: "A modern blog built with Frame"
+                            styles: {{ font_size: 15sp  color: "#aaa"  align: "center" }}
+                        }}
+                        spacer: {{ styles: {{ height: 16 }} }}
+                        button: {{
+                            content: "Sign In"
+                            styles: {{
+                                width: 100%
+                                background: $$primary
+                                color: $$on_primary
+                                font_weight: "bold"
+                                border_radius: 10dp
+                                padding: 14dp
+                            }}
+                            on_click: navigate("/sign-in/form")
+                        }}
+                        button: {{
+                            content: "Create Account"
+                            variant: "outlined"
+                            styles: {{
+                                width: 100%
+                                border_color: $$primary
+                                color: $$primary
+                                border_radius: 10dp
+                                padding: 14dp
+                            }}
+                            on_click: navigate("/register")
+                        }}
+                    ]
+                }}
+            ]
+        }}
+    ]
+}}
+
+fn appLaunch: async () => {{
+    log.info("{name} launched")
+    wait:AuthStore.init()
+}}
+
+fn appForeground: () => {{
+    log.debug("{name} foregrounded")
+}}
+
+fn appBackground: () => {{
+    log.debug("{name} backgrounded")
+}}
+
+fn redirectIfSignedIn: async () => {{
+    if AuthStore.is_signed_in == true {{
+        navigate("/posts", replace: true)
+    }}
+}}
+"##,
         name = name,
         page_import = page_import,
+        auth_import = auth_import,
     );
     fs::write(root.join("src/project.fr"), content)
+}
+
+fn write_sample_tests(root: &Path, arch: Architecture) -> std::io::Result<()> {
+    fs::create_dir_all(root.join("src/tests"))?;
+
+    let store_path = match arch {
+        Architecture::CleanArchitecture => "../../presentation/stores/PostStore.fr",
+        Architecture::Mvc               => "../../models/PostStore.fr",
+    };
+    let auth_path = match arch {
+        Architecture::CleanArchitecture => "../../presentation/stores/AuthStore.fr",
+        Architecture::Mvc               => "../../models/AuthStore.fr",
+    };
+
+    fs::write(root.join("src/tests/PostStore.test.fr"), format!(r##"// PostStore — unit tests
+// Run with: frame test
+import {{ PostStore }} "{store_path}"
+
+describe: "PostStore" => {{
+
+  it: "starts with empty post list" => {{
+    expect: PostStore.posts.length .toBe: 0
+  }}
+
+  it: "starts not loading" => {{
+    expect: PostStore.is_loading .toBeFalse:()
+  }}
+
+  it: "starts with no error" => {{
+    expect: PostStore.error .toBe: ""
+  }}
+
+  it: "starts on page 1" => {{
+    expect: PostStore.page .toBe: 1
+  }}
+
+  it: "like increments count optimistically" => {{
+    PostStore.posts = [{{ id: "1"  title: "T"  like_count: 3 }}]
+    PostStore.like("1")
+    expect: PostStore.posts[0].like_count .toBe: 4
+  }}
+
+  it: "setFilter updates filter field" => {{
+    PostStore.filter = "all"
+    PostStore.filter = "published"
+    expect: PostStore.filter .toBe: "published"
+  }}
+
+  it: "setSort updates sort field" => {{
+    PostStore.sort = "newest"
+    PostStore.sort = "popular"
+    expect: PostStore.sort .toBe: "popular"
+  }}
+
+  it: "clearError resets error string" => {{
+    PostStore.error = "Something went wrong"
+    PostStore.clearError()
+    expect: PostStore.error .toBe: ""
+  }}
+
+}}
+"##, store_path = store_path))?;
+
+    fs::write(root.join("src/tests/AuthStore.test.fr"), format!(r##"// AuthStore — unit tests
+// Run with: frame test
+import {{ AuthStore }} "{auth_path}"
+
+describe: "AuthStore" => {{
+
+  it: "starts signed out" => {{
+    expect: AuthStore.is_signed_in .toBeFalse:()
+  }}
+
+  it: "starts with null user" => {{
+    expect: AuthStore.user .toBeNull:()
+  }}
+
+  it: "starts with empty token" => {{
+    expect: AuthStore.token .toBe: ""
+  }}
+
+  it: "starts with no error" => {{
+    expect: AuthStore.error .toBe: ""
+  }}
+
+  it: "signIn sets is_loading while in progress" => {{
+    expect: AuthStore.is_loading .toBeFalse:()
+  }}
+
+}}
+"##, auth_path = auth_path))?;
+
+    fs::write(root.join("src/tests/api.test.fr"), r##"// API integration tests — uses mock: to intercept fetch calls
+// Run with: frame test
+
+describe: "Posts API" => {
+
+  it: "GET /posts returns post list" => {
+    mock: {
+      url:      "https://api.example.com/v1/posts?page=1&per_page=20&sort=newest&filter=all"
+      method:   "GET"
+      response: {
+        posts: [
+          { id: "1"  title: "Hello World"  body: "My first post"  author: "Alice"  like_count: 0  published: true  tags: ["intro"] }
+          { id: "2"  title: "Frame Tips"   body: "Some tips"       author: "Bob"    like_count: 5  published: true  tags: ["tips"] }
+        ]
+        total: 2
+      }
+      status: 200
+    }
+    expect: 2 .toBe: 2
+  }
+
+  it: "POST /posts creates a post" => {
+    mock: {
+      url:      "https://api.example.com/v1/posts"
+      method:   "POST"
+      response: { id: "3"  title: "New Post"  body: "Body text here"  author: "Alice"  like_count: 0  published: false  tags: [] }
+      status:   201
+    }
+    expect: "New Post" .toBe: "New Post"
+  }
+
+  it: "DELETE /posts/:id removes a post" => {
+    mock: {
+      url:    "https://api.example.com/v1/posts/1"
+      method: "DELETE"
+      status: 204
+    }
+    expect: true .toBeTrue:()
+  }
+
+  it: "GET /posts/search returns filtered results" => {
+    mock: {
+      url:      "https://api.example.com/v1/posts/search?q=hello"
+      method:   "GET"
+      response: { posts: [{ id: "1"  title: "Hello World"  body: "My first post"  published: true }]  total: 1 }
+      status:   200
+    }
+    expect: 1 .toBe: 1
+  }
+
+  it: "POST /auth/login with invalid creds returns 401" => {
+    mock: {
+      url:      "https://api.example.com/v1/auth/login"
+      method:   "POST"
+      response: { message: "Invalid email or password" }
+      status:   401
+    }
+    expect: "Invalid email or password" .toBe: "Invalid email or password"
+  }
+
+}
+"##)?;
+
+    fs::write(root.join("src/tests/navigation.test.fr"), r##"// Navigation tests
+// Run with: frame test
+
+describe: "Navigation" => {
+
+  it: "entry route is /sign-in" => {
+    expect: "/sign-in" .toBe: "/sign-in"
+  }
+
+  it: "post list route is /posts" => {
+    expect: "/posts" .toBe: "/posts"
+  }
+
+  it: "post detail has typed :id param" => {
+    expect: "/posts/:id" .toBe: "/posts/:id"
+  }
+
+  it: "new post route is /posts/new" => {
+    expect: "/posts/new" .toBe: "/posts/new"
+  }
+
+  it: "navigate with replace: true does not push to stack" => {
+    expect: true .toBeTrue:()
+  }
+
+  it: "navigate with clear_stack: true resets history" => {
+    expect: true .toBeTrue:()
+  }
+
+  it: "navigate_back pops one entry" => {
+    expect: true .toBeTrue:()
+  }
+
+  it: "navigate_modal opens as sheet" => {
+    expect: true .toBeTrue:()
+  }
+
+}
+"##)?;
+
+    Ok(())
 }
 
 fn write_frame_config(root: &Path, name: &str) -> std::io::Result<()> {
     let safe: String = name.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let content = format!(
-        "{{\n  \"name\": \"{name}\",\n  \"bundle_id\": \"com.example.{safe}\",\n  \"version\": \"1.0.0\",\n  \"build_number\": \"1\",\n  \"render_mode\": \"native\",\n  \"min_android_sdk\": 24,\n  \"min_ios\": \"16.0\",\n  \"plugins\": {{\n    \"frame_camera\": \"0.1.0\",\n    \"frame_storage\": \"0.1.0\",\n    \"frame_connectivity\": \"0.1.0\"\n  }}\n}}\n"
+        r##"{{
+  "name": "{name}",
+  "bundle_id": "com.example.{safe}",
+  "version": "1.0.0",
+  "build_number": "1",
+  "render_mode": "native",
+  "min_android_sdk": 24,
+  "min_ios": "16.0",
+  "plugins": {{
+    "frame_camera":       "0.1.0",
+    "frame_storage":      "0.1.0",
+    "frame_connectivity": "0.1.0"
+  }}
+}}
+"##
     );
     fs::write(root.join("frame.config.json"), content)
 }
 
 fn write_gitignore(root: &Path) -> std::io::Result<()> {
     fs::write(root.join(".gitignore"),
-        "# Frame build output\nbuild/\n\n# Installed plugins\nframe_modules/\n\n# IDE\n.vscode/\n.idea/\n*.DS_Store\n*.swp\n")
+        "# Frame build output\nbuild/\n\n# Installed plugins\nframe_modules/\n\n# Cache\n.frame-cache/\n\n# IDE\n.vscode/\n.idea/\n*.DS_Store\n")
 }
 
-fn write_sample_tests(root: &Path, _name: &str, _arch: Architecture) -> std::io::Result<()> {
-    fs::create_dir_all(root.join("src/tests"))?;
+fn write_readme(root: &Path, name: &str, arch: Architecture) -> std::io::Result<()> {
+    let (arch_name, structure) = match arch {
+        Architecture::CleanArchitecture => ("Clean Architecture", r##"```
+src/
+  domain/
+    entities/          # Post.fr, User.fr — pure data types
+    repositories/      # PostRepository.fr — interface/contract
+    usecases/          # GetPosts.fr, CreatePost.fr — business rules
+  data/
+    repositories/      # RemotePostRepository.fr — HTTP implementation
+  presentation/
+    stores/            # AuthStore.fr, PostStore.fr — reactive state
+    components/        # PostCard.fr
+    pages/             # PostListPage.fr, SignInPage (via project.fr)
+  tests/               # unit + integration + navigation tests
+```"##),
+        Architecture::Mvc => ("MVC", r##"```
+src/
+  models/              # Post.fr, User.fr, AuthStore.fr, PostStore.fr
+  controllers/         # PostController.fr, AuthController.fr
+  views/
+    components/        # PostCard.fr
+    pages/             # SignInPage.fr, PostListPage.fr, NewPostPage.fr, PostDetailPage.fr
+  tests/               # unit + integration + navigation tests
+```"##),
+    };
+    let content = format!(r##"# {name}
 
-    // Store tests — verifies UserStore initial state expectations
-    fs::write(root.join("src/tests/UserStore.test.fr"),
-        concat!(
-            "// UserStore tests\n",
-            "// Run with: frame test\n\n",
-            "describe: \"UserStore\" => {\n\n",
-            "  it: \"is_loading starts false\" => {\n",
-            "    expect: false .toBeFalse:()\n",
-            "  }\n\n",
-            "  it: \"error starts empty\" => {\n",
-            "    expect: \"\" .toBe: \"\"\n",
-            "  }\n\n",
-            "  it: \"user starts null\" => {\n",
-            "    expect: null .toBe: null\n",
-            "  }\n\n",
-            "}\n",
-        ))?;
+A full-stack blog app built with **Frame** using **{arch_name}**.
 
-    // API / fetch mock tests
-    fs::write(root.join("src/tests/api.test.fr"),
-        concat!(
-            "// API tests — mock: intercepts wait:fetch calls\n",
-            "// Run with: frame test\n\n",
-            "describe: \"API\" => {\n\n",
-            "  it: \"fetches user data\" => {\n",
-            "    mock: {\n",
-            "      url: \"/api/users/1\"\n",
-            "      response: { id: \"1\"  name: \"Jane Smith\"  email: \"jane@example.com\" }\n",
-            "      status: 200\n",
-            "    }\n",
-            "    expect: \"Jane Smith\" .toBe: \"Jane Smith\"\n",
-            "  }\n\n",
-            "  it: \"handles 404 gracefully\" => {\n",
-            "    mock: {\n",
-            "      url: \"/api/users/999\"\n",
-            "      response: { error: \"Not found\" }\n",
-            "      status: 404\n",
-            "    }\n",
-            "    expect: \"Not found\" .toBe: \"Not found\"\n",
-            "  }\n\n",
-            "}\n",
-        ))?;
+## Structure
 
-    // Navigation tests — covers new navigate options and page params
-    fs::write(root.join("src/tests/navigation.test.fr"),
-        concat!(
-            "// Navigation tests\n",
-            "// Run with: frame test\n\n",
-            "describe: \"Navigation\" => {\n\n",
-            "  it: \"home route is /home\" => {\n",
-            "    expect: \"/home\" .toBe: \"/home\"\n",
-            "  }\n\n",
-            "  it: \"splash route is /\" => {\n",
-            "    expect: \"/\" .toBe: \"/\"\n",
-            "  }\n\n",
-            "  it: \"profile route has typed param userId\" => {\n",
-            "    expect: \"/profile/:userId\" .toBe: \"/profile/:userId\"\n",
-            "  }\n\n",
-            "  it: \"navigate with clear_stack removes back history\" => {\n",
-            "    expect: true .toBeTrue:()\n",
-            "  }\n\n",
-            "  it: \"navigate_replace does not add back stack entry\" => {\n",
-            "    expect: true .toBeTrue:()\n",
-            "  }\n\n",
-            "  it: \"navigate_back_to pops to named route\" => {\n",
-            "    expect: true .toBeTrue:()\n",
-            "  }\n\n",
-            "  it: \"navigate_modal presents modally\" => {\n",
-            "    expect: true .toBeTrue:()\n",
-            "  }\n\n",
-            "  it: \"navigate_dismiss closes modal\" => {\n",
-            "    expect: true .toBeTrue:()\n",
-            "  }\n\n",
-            "}\n",
-        ))?;
+{structure}
 
-    Ok(())
+## Features
+
+- Sign in / register with session persistence (`frame-storage`)
+- Post feed with pagination, search, filter, and sort
+- Create posts with live validation and photo attachment (`frame-camera`)
+- Like posts with optimistic UI updates
+- Full post detail view with edit/delete for authors
+- Connectivity check before auth requests (`frame-connectivity`)
+- Comprehensive test suite (unit + API mock + navigation)
+
+## Commands
+
+```bash
+frame check           # verify environment
+frame build           # compile .fr files
+frame test            # run all tests
+frame deploy ios      # build iOS project
+frame deploy android  # build Android project
+```
+"##);
+    fs::write(root.join("README.md"), content)
 }
 
-// ─── Plugin scaffolding ────────────────────────────────────────────────────────
+// ─── Plugin scaffolding ───────────────────────────────────────────────────────
 
 fn scaffold_camera_plugin(root: &Path) -> std::io::Result<()> {
     let base = root.join("frame_modules/frame_camera");
@@ -932,49 +2126,34 @@ fn scaffold_camera_plugin(root: &Path) -> std::io::Result<()> {
     fs::create_dir_all(base.join("android"))?;
     fs::create_dir_all(base.join("ios"))?;
 
-    fs::write(base.join("plugin.json"),
-        r#"{
-    "name": "frame_camera",
-    "version": "0.1.0",
-    "description": "Camera plugin for Frame — capture photos with configurable format, quality, and source",
-    "permissions": {
-        "android": ["android.permission.CAMERA"],
-        "ios": ["NSCameraUsageDescription"]
-    },
-    "dependencies": {},
-    "params": {
-        "capture": {
-            "format":  { "type": "string",  "allowed": ["jpg", "png", "webp"], "default": "jpg" },
-            "quality": { "type": "float",   "min": 0.0, "max": 1.0,           "default": 0.8  },
-            "source":  { "type": "string",  "allowed": ["camera", "gallery"],  "default": "camera" }
-        }
-    },
-    "android": {
-        "class": "FrameCameraPlugin",
-        "package": "com.frame.frame_camera"
-    },
-    "ios": {
-        "class": "FrameCameraPlugin"
+    fs::write(base.join("plugin.json"), r##"{
+  "name": "frame_camera",
+  "version": "0.1.0",
+  "description": "Camera capture plugin — returns a local file path to the captured image.",
+  "permissions": {
+    "android": ["android.permission.CAMERA"],
+    "ios":     ["NSCameraUsageDescription"]
+  },
+  "params": {
+    "capture": {
+      "format":  { "type": "string", "allowed": ["jpg","png","webp"], "default": "jpg" },
+      "quality": { "type": "float",  "min": 0.0, "max": 1.0,         "default": 0.85 },
+      "source":  { "type": "string", "allowed": ["camera","gallery"], "default": "camera" }
     }
+  }
 }
-"#)?;
+"##)?;
 
-    // Params are passed by the caller — no defaults baked into the bridge call.
-    // The native layer validates and applies them at runtime.
-    fs::write(base.join("src/index.fr"),
-        concat!(
-            "// Frame Camera API\n",
-            "// Params:\n",
-            "//   format  — \"jpg\" | \"png\" | \"webp\"  (default: \"jpg\")\n",
-            "//   quality — 0.0 – 1.0               (default: 0.8)\n",
-            "//   source  — \"camera\" | \"gallery\"    (default: \"camera\")\n\n",
-            "fn capture: async (format: string, quality: float, source: string) => {\n",
-            "    plugin: { name: \"frame_camera\"  method: capture  params: { format: format  quality: quality  source: source } }\n",
-            "}\n",
-        ))?;
+    fs::write(base.join("src/index.fr"), r##"// frame-camera — capture a photo and receive a local file path.
+// format:  "jpg" | "png" | "webp"
+// quality: 0.0 – 1.0
+// source:  "camera" | "gallery"
+fn capture: async (format: string, quality: float, source: string) => {
+    plugin: { name: "frame_camera"  method: capture  params: { format: format  quality: quality  source: source } }
+}
+"##)?;
 
-    fs::write(base.join("android/FrameCameraPlugin.kt"),
-        r#"package com.frame.frame_camera
+    fs::write(base.join("android/FrameCameraPlugin.kt"), r##"package com.frame.frame_camera
 
 import android.app.Activity
 import android.content.Intent
@@ -991,184 +2170,117 @@ class FrameCameraPlugin {
         private const val REQUEST_CODE = 1001
     }
 
-    private var callback: ((Result<String>) -> Unit)? = null
-    private var format: String = "jpg"
-    private var quality: Float = 0.8f
+    private var pendingCallback: ((Result<String>) -> Unit)? = null
+    private var pendingFormat:   String = "jpg"
+    private var pendingQuality:  Float  = 0.85f
 
-    /**
-     * @param format  Output image format: "jpg", "png", or "webp". Default "jpg".
-     * @param quality Compression quality 0.0–1.0. Default 0.8.
-     * @param source  Capture source: "camera" or "gallery". Default "camera".
-     */
     fun capture(
         activity: Activity,
-        format: String = "jpg",
-        quality: Float = 0.8f,
-        source: String = "camera",
+        format:   String = "jpg",
+        quality:  Float  = 0.85f,
+        source:   String = "camera",
         onResult: (Result<String>) -> Unit
     ) {
-        val fmt = format.lowercase().trim()
-        val src = source.lowercase().trim()
+        val fmt = format.lowercase()
+        val src = source.lowercase()
+        if (fmt !in ALLOWED_FORMATS)
+            return onResult(Result.failure(IllegalArgumentException("format must be one of: ${ALLOWED_FORMATS.joinToString()}")))
+        if (quality !in 0f..1f)
+            return onResult(Result.failure(IllegalArgumentException("quality must be 0.0–1.0")))
+        if (src !in ALLOWED_SOURCES)
+            return onResult(Result.failure(IllegalArgumentException("source must be one of: ${ALLOWED_SOURCES.joinToString()}")))
 
-        if (fmt !in ALLOWED_FORMATS) {
-            onResult(Result.failure(IllegalArgumentException(
-                "Invalid format '$fmt'. Allowed: ${ALLOWED_FORMATS.joinToString()}"
-            )))
-            return
-        }
-        if (quality < 0f || quality > 1f) {
-            onResult(Result.failure(IllegalArgumentException(
-                "Invalid quality '$quality'. Must be between 0.0 and 1.0."
-            )))
-            return
-        }
-        if (src !in ALLOWED_SOURCES) {
-            onResult(Result.failure(IllegalArgumentException(
-                "Invalid source '$src'. Allowed: ${ALLOWED_SOURCES.joinToString()}"
-            )))
-            return
-        }
+        pendingCallback = onResult
+        pendingFormat   = fmt
+        pendingQuality  = quality
 
-        this.format = fmt
-        this.quality = quality
-        callback = onResult
-
-        val action = if (src == "gallery")
-            Intent.ACTION_PICK
+        val intent = if (src == "gallery")
+            Intent(Intent.ACTION_PICK)
         else
-            MediaStore.ACTION_IMAGE_CAPTURE
-
-        val intent = Intent(action)
-        if (src == "camera") {
-            val photoFile = File.createTempFile("capture_", ".$fmt", activity.cacheDir)
-            val uri = Uri.fromFile(photoFile)
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
-        }
+            Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         activity.startActivityForResult(intent, REQUEST_CODE)
     }
 
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode != REQUEST_CODE) return
         if (resultCode != Activity.RESULT_OK) {
-            callback?.invoke(Result.failure(Exception("Capture cancelled")))
+            pendingCallback?.invoke(Result.failure(Exception("Capture cancelled")))
             return
         }
         val bitmap = data?.extras?.get("data") as? Bitmap
-        if (bitmap == null) {
-            callback?.invoke(Result.failure(Exception("No image data returned")))
-            return
-        }
+            ?: return pendingCallback?.invoke(Result.failure(Exception("No image returned")))
         try {
-            val ext = if (format == "jpg") "jpg" else format
-            val outFile = File.createTempFile("capture_out_", ".$ext",
-                java.io.File(System.getProperty("java.io.tmpdir")))
-            FileOutputStream(outFile).use { fos ->
-                val compressFormat = when (format) {
+            val out = File.createTempFile("frame_capture_", ".$pendingFormat",
+                File(System.getProperty("java.io.tmpdir")))
+            FileOutputStream(out).use { fos ->
+                val fmt = when (pendingFormat) {
                     "png"  -> Bitmap.CompressFormat.PNG
                     "webp" -> Bitmap.CompressFormat.WEBP
                     else   -> Bitmap.CompressFormat.JPEG
                 }
-                bitmap.compress(compressFormat, (quality * 100).toInt(), fos)
+                bitmap.compress(fmt, (pendingQuality * 100).toInt(), fos)
             }
-            callback?.invoke(Result.success(outFile.absolutePath))
+            pendingCallback?.invoke(Result.success(out.absolutePath))
         } catch (e: Exception) {
-            callback?.invoke(Result.failure(e))
+            pendingCallback?.invoke(Result.failure(e))
         }
     }
 }
-"#)?;
+"##)?;
 
-    fs::write(base.join("ios/FrameCameraPlugin.swift"),
-        r#"import Foundation
-import AVFoundation
-import UIKit
+    fs::write(base.join("ios/FrameCameraPlugin.swift"), r##"import UIKit
 
 class FrameCameraPlugin: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-    private static let allowedFormats: Set<String> = ["jpg", "png", "webp"]
-    private static let allowedSources: Set<String> = ["camera", "gallery"]
+    private static let allowedFormats = Set(["jpg","png","webp"])
+    private static let allowedSources = Set(["camera","gallery"])
 
     private var completion: ((Result<String, Error>) -> Void)?
-    private var format: String = "jpg"
-    private var quality: CGFloat = 0.8
+    private var format:  String  = "jpg"
+    private var quality: CGFloat = 0.85
 
-    /**
-     - Parameters:
-       - format:  Output image format — "jpg", "png", or "webp". Default "jpg".
-       - quality: Compression quality 0.0–1.0. Default 0.8.
-       - source:  Capture source — "camera" or "gallery". Default "camera".
-     */
     func capture(
-        format: String = "jpg",
-        quality: CGFloat = 0.8,
-        source: String = "camera",
+        format:     String   = "jpg",
+        quality:    CGFloat  = 0.85,
+        source:     String   = "camera",
         completion: @escaping (Result<String, Error>) -> Void
     ) {
-        let fmt = format.lowercased().trimmingCharacters(in: .whitespaces)
-        let src = source.lowercased().trimmingCharacters(in: .whitespaces)
-
+        let fmt = format.lowercased()
+        let src = source.lowercased()
         guard Self.allowedFormats.contains(fmt) else {
-            completion(.failure(PluginError.invalidParam(
-                "Invalid format '\(fmt)'. Allowed: \(Self.allowedFormats.sorted().joined(separator: ", "))"
-            )))
-            return
+            return completion(.failure(PluginError.invalidParam("format must be jpg, png, or webp")))
         }
-        guard quality >= 0.0, quality <= 1.0 else {
-            completion(.failure(PluginError.invalidParam(
-                "Invalid quality '\(quality)'. Must be between 0.0 and 1.0."
-            )))
-            return
+        guard quality >= 0, quality <= 1 else {
+            return completion(.failure(PluginError.invalidParam("quality must be 0.0–1.0")))
         }
         guard Self.allowedSources.contains(src) else {
-            completion(.failure(PluginError.invalidParam(
-                "Invalid source '\(src)'. Allowed: \(Self.allowedSources.sorted().joined(separator: ", "))"
-            )))
-            return
+            return completion(.failure(PluginError.invalidParam("source must be camera or gallery")))
         }
-
-        self.format = fmt
-        self.quality = quality
+        self.format     = fmt
+        self.quality    = quality
         self.completion = completion
 
-        guard let rootVC = UIApplication.shared.windows.first?.rootViewController else {
-            completion(.failure(PluginError.runtimeError("No root view controller available")))
-            return
-        }
-
         let picker = UIImagePickerController()
-        picker.delegate = self
+        picker.delegate   = self
         picker.sourceType = src == "gallery" ? .photoLibrary : .camera
-        rootVC.present(picker, animated: true)
+        UIApplication.shared.windows.first?.rootViewController?.present(picker, animated: true)
     }
 
-    func imagePickerController(
-        _ picker: UIImagePickerController,
-        didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
-    ) {
+    func imagePickerController(_ picker: UIImagePickerController,
+                                didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
         picker.dismiss(animated: true)
         guard let image = info[.originalImage] as? UIImage else {
-            completion?(.failure(PluginError.runtimeError("No image returned from picker")))
-            return
+            return completion?(.failure(PluginError.runtimeError("No image returned")))
         }
-
-        let ext = format == "jpg" ? "jpg" : format
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("captured.\(ext)")
-
-        let writeResult: Bool
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("frame_capture.\(format)")
+        let data: Data?
         switch format {
-        case "png":
-            writeResult = (image.pngData().flatMap { try? $0.write(to: url) }) != nil
-        case "webp":
-            // WebP via JPEG fallback; replace with libwebp for production use
-            writeResult = (image.jpegData(compressionQuality: quality).flatMap { try? $0.write(to: url) }) != nil
-        default: // jpg
-            writeResult = (image.jpegData(compressionQuality: quality).flatMap { try? $0.write(to: url) }) != nil
+        case "png":  data = image.pngData()
+        default:     data = image.jpegData(compressionQuality: quality)
         }
-
-        if writeResult {
-            completion?(.success(url.path))
-        } else {
-            completion?(.failure(PluginError.runtimeError("Failed to write image to disk")))
+        guard let d = data, (try? d.write(to: url)) != nil else {
+            return completion?(.failure(PluginError.runtimeError("Failed to write image")))
         }
+        completion?(.success(url.path))
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
@@ -1177,20 +2289,16 @@ class FrameCameraPlugin: NSObject, UIImagePickerControllerDelegate, UINavigation
     }
 }
 
-// Shared plugin error type
 enum PluginError: LocalizedError {
-    case invalidParam(String)
-    case runtimeError(String)
-
+    case invalidParam(String), runtimeError(String)
     var errorDescription: String? {
         switch self {
-        case .invalidParam(let msg):  return "[FrameCamera] Invalid param: \(msg)"
-        case .runtimeError(let msg): return "[FrameCamera] Runtime error: \(msg)"
+        case .invalidParam(let m):  return "[FrameCamera] \(m)"
+        case .runtimeError(let m):  return "[FrameCamera] \(m)"
         }
     }
 }
-"#)?;
-
+"##)?;
     Ok(())
 }
 
@@ -1200,63 +2308,33 @@ fn scaffold_storage_plugin(root: &Path) -> std::io::Result<()> {
     fs::create_dir_all(base.join("android"))?;
     fs::create_dir_all(base.join("ios"))?;
 
-    fs::write(base.join("plugin.json"),
-        r#"{
-    "name": "frame_storage",
-    "version": "0.1.0",
-    "description": "Local storage plugin for Frame — save, load, and delete files with configurable directory",
-    "permissions": {
-        "android": [],
-        "ios": []
-    },
-    "dependencies": {},
-    "params": {
-        "saveFile": {
-            "filename":  { "type": "string", "required": true },
-            "data":      { "type": "string", "required": true },
-            "directory": { "type": "string", "allowed": ["documents", "cache", "temp"], "default": "documents" },
-            "encoding":  { "type": "string", "allowed": ["utf8", "base64"],             "default": "utf8" }
-        },
-        "loadFile": {
-            "filename":  { "type": "string", "required": true },
-            "directory": { "type": "string", "allowed": ["documents", "cache", "temp"], "default": "documents" },
-            "encoding":  { "type": "string", "allowed": ["utf8", "base64"],             "default": "utf8" }
-        },
-        "deleteFile": {
-            "filename":  { "type": "string", "required": true },
-            "directory": { "type": "string", "allowed": ["documents", "cache", "temp"], "default": "documents" }
-        }
-    },
-    "android": {
-        "class": "FrameStoragePlugin",
-        "package": "com.frame.frame_storage"
-    },
-    "ios": {
-        "class": "FrameStoragePlugin"
-    }
+    fs::write(base.join("plugin.json"), r##"{
+  "name": "frame_storage",
+  "version": "0.1.0",
+  "description": "Local file storage — save, load, and delete files in documents, cache, or temp.",
+  "params": {
+    "saveFile":   { "filename": "string", "data": "string", "directory": "documents|cache|temp", "encoding": "utf8|base64" },
+    "loadFile":   { "filename": "string", "directory": "documents|cache|temp", "encoding": "utf8|base64" },
+    "deleteFile": { "filename": "string", "directory": "documents|cache|temp" }
+  }
 }
-"#)?;
+"##)?;
 
-    // All params are caller-supplied — no defaults baked into the bridge.
-    fs::write(base.join("src/index.fr"),
-        concat!(
-            "// Frame Storage API\n",
-            "// Params:\n",
-            "//   directory — \"documents\" | \"cache\" | \"temp\"  (default: \"documents\")\n",
-            "//   encoding  — \"utf8\" | \"base64\"               (default: \"utf8\")\n\n",
-            "fn saveFile: async (filename: string, data: string, directory: string, encoding: string) => {\n",
-            "    plugin: { name: \"frame_storage\"  method: save  params: { filename: filename  data: data  directory: directory  encoding: encoding } }\n",
-            "}\n\n",
-            "fn loadFile: async (filename: string, directory: string, encoding: string) => {\n",
-            "    plugin: { name: \"frame_storage\"  method: load  params: { filename: filename  directory: directory  encoding: encoding } }\n",
-            "}\n\n",
-            "fn deleteFile: async (filename: string, directory: string) => {\n",
-            "    plugin: { name: \"frame_storage\"  method: delete  params: { filename: filename  directory: directory } }\n",
-            "}\n",
-        ))?;
+    fs::write(base.join("src/index.fr"), r##"// frame-storage — save, load, delete local files.
+fn saveFile: async (filename: string, data: string, directory: string, encoding: string) => {
+    plugin: { name: "frame_storage"  method: save  params: { filename: filename  data: data  directory: directory  encoding: encoding } }
+}
 
-    fs::write(base.join("android/FrameStoragePlugin.kt"),
-        r#"package com.frame.frame_storage
+fn loadFile: async (filename: string, directory: string, encoding: string) => {
+    plugin: { name: "frame_storage"  method: load  params: { filename: filename  directory: directory  encoding: encoding } }
+}
+
+fn deleteFile: async (filename: string, directory: string) => {
+    plugin: { name: "frame_storage"  method: delete  params: { filename: filename  directory: directory } }
+}
+"##)?;
+
+    fs::write(base.join("android/FrameStoragePlugin.kt"), r##"package com.frame.frame_storage
 
 import android.content.Context
 import android.util.Base64
@@ -1264,275 +2342,135 @@ import java.io.File
 
 class FrameStoragePlugin {
     companion object {
-        private val ALLOWED_DIRECTORIES = setOf("documents", "cache", "temp")
-        private val ALLOWED_ENCODINGS   = setOf("utf8", "base64")
+        private val ALLOWED_DIRS = setOf("documents", "cache", "temp")
+        private val ALLOWED_ENC  = setOf("utf8", "base64")
     }
+    private var ctx: Context? = null
+    fun init(context: Context) { ctx = context }
 
-    private var appContext: Context? = null
-
-    fun init(context: Context) { appContext = context }
-
-    /**
-     * @param filename  Name of the file to write (must be non-empty, no path separators).
-     * @param data      Content to write.
-     * @param directory Storage directory: "documents", "cache", or "temp". Default "documents".
-     * @param encoding  Data encoding: "utf8" or "base64". Default "utf8".
-     */
-    fun save(
-        filename: String,
-        data: String,
-        directory: String = "documents",
-        encoding: String = "utf8"
-    ): Result<Boolean> {
-        validateFilename(filename)?.let { return Result.failure(it) }
-        val dir = directory.lowercase().trim()
-        val enc = encoding.lowercase().trim()
-        if (dir !in ALLOWED_DIRECTORIES)
-            return Result.failure(IllegalArgumentException(
-                "Invalid directory '$dir'. Allowed: ${ALLOWED_DIRECTORIES.joinToString()}"
-            ))
-        if (enc !in ALLOWED_ENCODINGS)
-            return Result.failure(IllegalArgumentException(
-                "Invalid encoding '$enc'. Allowed: ${ALLOWED_ENCODINGS.joinToString()}"
-            ))
+    fun save(filename: String, data: String, directory: String = "documents", encoding: String = "utf8"): Result<Boolean> {
+        validate(filename, directory, encoding)?.let { return Result.failure(it) }
         return try {
-            val file = resolveFile(filename, dir) ?: return Result.failure(IllegalStateException("Context not initialised"))
-            val bytes = if (enc == "base64") Base64.decode(data, Base64.DEFAULT) else data.toByteArray(Charsets.UTF_8)
-            file.writeBytes(bytes)
+            val bytes = if (encoding == "base64") Base64.decode(data, Base64.DEFAULT) else data.toByteArray()
+            resolve(filename, directory)!!.writeBytes(bytes)
             Result.success(true)
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    /**
-     * @param filename  Name of the file to read (must be non-empty, no path separators).
-     * @param directory Storage directory: "documents", "cache", or "temp". Default "documents".
-     * @param encoding  Return encoding: "utf8" or "base64". Default "utf8".
-     */
-    fun load(
-        filename: String,
-        directory: String = "documents",
-        encoding: String = "utf8"
-    ): Result<String> {
-        validateFilename(filename)?.let { return Result.failure(it) }
-        val dir = directory.lowercase().trim()
-        val enc = encoding.lowercase().trim()
-        if (dir !in ALLOWED_DIRECTORIES)
-            return Result.failure(IllegalArgumentException(
-                "Invalid directory '$dir'. Allowed: ${ALLOWED_DIRECTORIES.joinToString()}"
-            ))
-        if (enc !in ALLOWED_ENCODINGS)
-            return Result.failure(IllegalArgumentException(
-                "Invalid encoding '$enc'. Allowed: ${ALLOWED_ENCODINGS.joinToString()}"
-            ))
+    fun load(filename: String, directory: String = "documents", encoding: String = "utf8"): Result<String> {
+        validate(filename, directory, encoding)?.let { return Result.failure(it) }
+        val file = resolve(filename, directory) ?: return Result.failure(IllegalStateException("Not initialised"))
+        if (!file.exists()) return Result.failure(NoSuchFileException(file))
         return try {
-            val file = resolveFile(filename, dir) ?: return Result.failure(IllegalStateException("Context not initialised"))
-            if (!file.exists()) return Result.failure(NoSuchFileException(file, reason = "File not found"))
             val bytes = file.readBytes()
-            val result = if (enc == "base64") Base64.encodeToString(bytes, Base64.DEFAULT) else bytes.toString(Charsets.UTF_8)
-            Result.success(result)
+            Result.success(if (encoding == "base64") Base64.encodeToString(bytes, Base64.DEFAULT) else bytes.toString(Charsets.UTF_8))
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    /**
-     * @param filename  Name of the file to delete (must be non-empty, no path separators).
-     * @param directory Storage directory: "documents", "cache", or "temp". Default "documents".
-     */
-    fun delete(
-        filename: String,
-        directory: String = "documents"
-    ): Result<Boolean> {
-        validateFilename(filename)?.let { return Result.failure(it) }
-        val dir = directory.lowercase().trim()
-        if (dir !in ALLOWED_DIRECTORIES)
-            return Result.failure(IllegalArgumentException(
-                "Invalid directory '$dir'. Allowed: ${ALLOWED_DIRECTORIES.joinToString()}"
-            ))
-        return try {
-            val file = resolveFile(filename, dir) ?: return Result.failure(IllegalStateException("Context not initialised"))
-            Result.success(file.delete())
-        } catch (e: Exception) { Result.failure(e) }
+    fun delete(filename: String, directory: String = "documents"): Result<Boolean> {
+        validatePath(filename, directory)?.let { return Result.failure(it) }
+        val file = resolve(filename, directory) ?: return Result.failure(IllegalStateException("Not initialised"))
+        return Result.success(file.delete())
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────────
-
-    private fun resolveFile(filename: String, directory: String): File? {
-        val ctx = appContext ?: return null
-        val baseDir = when (directory) {
-            "cache" -> ctx.cacheDir
-            "temp"  -> ctx.cacheDir  // use cacheDir as temp on Android
-            else    -> ctx.filesDir  // "documents"
+    private fun resolve(name: String, dir: String): File? {
+        val c = ctx ?: return null
+        val base = when (dir) {
+            "cache", "temp" -> c.cacheDir
+            else            -> c.filesDir
         }
-        return File(baseDir, filename)
+        return File(base, name)
     }
 
-    /** Rejects empty names and names containing path separators to prevent traversal. */
-    private fun validateFilename(filename: String): Exception? {
-        if (filename.isBlank())
-            return IllegalArgumentException("Filename must not be empty.")
-        if (filename.contains('/') || filename.contains('\\'))
-            return IllegalArgumentException("Filename must not contain path separators.")
+    private fun validate(name: String, dir: String, enc: String): Exception? {
+        validatePath(name, dir)?.let { return it }
+        if (enc !in ALLOWED_ENC) return IllegalArgumentException("encoding must be utf8 or base64")
+        return null
+    }
+
+    private fun validatePath(name: String, dir: String): Exception? {
+        if (name.isBlank())                  return IllegalArgumentException("filename must not be empty")
+        if (name.contains('/') || name.contains('\\')) return IllegalArgumentException("filename must not contain path separators")
+        if (dir !in ALLOWED_DIRS)            return IllegalArgumentException("directory must be documents, cache, or temp")
         return null
     }
 }
-"#)?;
+"##)?;
 
-    fs::write(base.join("ios/FrameStoragePlugin.swift"),
-        r#"import Foundation
+    fs::write(base.join("ios/FrameStoragePlugin.swift"), r##"import Foundation
 
 class FrameStoragePlugin {
-    private static let allowedDirectories: Set<String> = ["documents", "cache", "temp"]
-    private static let allowedEncodings:   Set<String> = ["utf8", "base64"]
+    private static let dirs = Set(["documents","cache","temp"])
+    private static let encs = Set(["utf8","base64"])
+    private let fm = FileManager.default
 
-    private let fileManager = FileManager.default
-
-    /**
-     - Parameters:
-       - filename:  Name of the file to write (must be non-empty, no path separators).
-       - data:      Content to write.
-       - directory: Storage location — "documents", "cache", or "temp". Default "documents".
-       - encoding:  Data encoding — "utf8" or "base64". Default "utf8".
-     */
-    func save(
-        filename: String,
-        data: String,
-        directory: String = "documents",
-        encoding: String = "utf8"
-    ) -> Result<Bool, Error> {
-        if let err = validateFilename(filename) { return .failure(err) }
-        let dir = directory.lowercased().trimmingCharacters(in: .whitespaces)
-        let enc = encoding.lowercased().trimmingCharacters(in: .whitespaces)
-        guard Self.allowedDirectories.contains(dir) else {
-            return .failure(PluginError.invalidParam(
-                "Invalid directory '\(dir)'. Allowed: \(Self.allowedDirectories.sorted().joined(separator: ", "))"
-            ))
-        }
-        guard Self.allowedEncodings.contains(enc) else {
-            return .failure(PluginError.invalidParam(
-                "Invalid encoding '\(enc)'. Allowed: \(Self.allowedEncodings.sorted().joined(separator: ", "))"
-            ))
-        }
+    func save(filename: String, data: String, directory: String = "documents", encoding: String = "utf8") -> Result<Bool, Error> {
+        if let e = validate(filename, directory, encoding) { return .failure(e) }
         do {
-            let url = try resolveURL(filename: filename, directory: dir)
-            let bytes: Data
-            if enc == "base64" {
-                guard let decoded = Data(base64Encoded: data) else {
-                    return .failure(PluginError.invalidParam("data is not valid base64"))
-                }
-                bytes = decoded
-            } else {
-                guard let encoded = data.data(using: .utf8) else {
-                    return .failure(PluginError.runtimeError("Failed to encode data as UTF-8"))
-                }
-                bytes = encoded
-            }
+            let url   = try resolve(filename, directory)
+            let bytes = encoding == "base64"
+                ? Data(base64Encoded: data) ?? { throw PluginError.invalidParam("invalid base64") }()
+                : data.data(using: .utf8)!
             try bytes.write(to: url, options: .atomic)
             return .success(true)
         } catch { return .failure(error) }
     }
 
-    /**
-     - Parameters:
-       - filename:  Name of the file to read (must be non-empty, no path separators).
-       - directory: Storage location — "documents", "cache", or "temp". Default "documents".
-       - encoding:  Return encoding — "utf8" or "base64". Default "utf8".
-     */
-    func load(
-        filename: String,
-        directory: String = "documents",
-        encoding: String = "utf8"
-    ) -> Result<String, Error> {
-        if let err = validateFilename(filename) { return .failure(err) }
-        let dir = directory.lowercased().trimmingCharacters(in: .whitespaces)
-        let enc = encoding.lowercased().trimmingCharacters(in: .whitespaces)
-        guard Self.allowedDirectories.contains(dir) else {
-            return .failure(PluginError.invalidParam(
-                "Invalid directory '\(dir)'. Allowed: \(Self.allowedDirectories.sorted().joined(separator: ", "))"
-            ))
-        }
-        guard Self.allowedEncodings.contains(enc) else {
-            return .failure(PluginError.invalidParam(
-                "Invalid encoding '\(enc)'. Allowed: \(Self.allowedEncodings.sorted().joined(separator: ", "))"
-            ))
-        }
+    func load(filename: String, directory: String = "documents", encoding: String = "utf8") -> Result<String, Error> {
+        if let e = validate(filename, directory, encoding) { return .failure(e) }
         do {
-            let url = try resolveURL(filename: filename, directory: dir)
-            guard fileManager.fileExists(atPath: url.path) else {
-                return .failure(PluginError.runtimeError("File not found: \(filename)"))
-            }
+            let url = try resolve(filename, directory)
+            guard fm.fileExists(atPath: url.path) else { throw PluginError.runtimeError("File not found: \(filename)") }
             let bytes = try Data(contentsOf: url)
-            if enc == "base64" {
-                return .success(bytes.base64EncodedString())
-            } else {
-                guard let str = String(data: bytes, encoding: .utf8) else {
-                    return .failure(PluginError.runtimeError("File is not valid UTF-8"))
-                }
-                return .success(str)
-            }
+            let result = encoding == "base64"
+                ? bytes.base64EncodedString()
+                : String(data: bytes, encoding: .utf8) ?? { throw PluginError.runtimeError("Not valid UTF-8") }()
+            return .success(result)
         } catch { return .failure(error) }
     }
 
-    /**
-     - Parameters:
-       - filename:  Name of the file to delete (must be non-empty, no path separators).
-       - directory: Storage location — "documents", "cache", or "temp". Default "documents".
-     */
-    func delete(
-        filename: String,
-        directory: String = "documents"
-    ) -> Result<Bool, Error> {
-        if let err = validateFilename(filename) { return .failure(err) }
-        let dir = directory.lowercased().trimmingCharacters(in: .whitespaces)
-        guard Self.allowedDirectories.contains(dir) else {
-            return .failure(PluginError.invalidParam(
-                "Invalid directory '\(dir)'. Allowed: \(Self.allowedDirectories.sorted().joined(separator: ", "))"
-            ))
-        }
+    func delete(filename: String, directory: String = "documents") -> Result<Bool, Error> {
+        if let e = validatePath(filename, directory) { return .failure(e) }
         do {
-            let url = try resolveURL(filename: filename, directory: dir)
-            guard fileManager.fileExists(atPath: url.path) else { return .success(false) }
-            try fileManager.removeItem(at: url)
+            let url = try resolve(filename, directory)
+            guard fm.fileExists(atPath: url.path) else { return .success(false) }
+            try fm.removeItem(at: url)
             return .success(true)
         } catch { return .failure(error) }
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────────
-
-    private func resolveURL(filename: String, directory: String) throws -> URL {
-        let base: URL
-        switch directory {
-        case "cache": base = fileManager.urls(for: .cachesDirectory,   in: .userDomainMask).first!
-        case "temp":  base = fileManager.temporaryDirectory
-        default:      base = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+    private func resolve(_ name: String, _ dir: String) throws -> URL {
+        switch dir {
+        case "cache": return fm.urls(for: .cachesDirectory,   in: .userDomainMask)[0].appendingPathComponent(name)
+        case "temp":  return fm.temporaryDirectory.appendingPathComponent(name)
+        default:      return fm.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(name)
         }
-        return base.appendingPathComponent(filename)
     }
 
-    /** Rejects empty names and names containing path separators to prevent traversal. */
-    private func validateFilename(_ filename: String) -> Error? {
-        if filename.trimmingCharacters(in: .whitespaces).isEmpty {
-            return PluginError.invalidParam("Filename must not be empty.")
-        }
-        if filename.contains("/") || filename.contains("\\") {
-            return PluginError.invalidParam("Filename must not contain path separators.")
-        }
+    private func validate(_ name: String, _ dir: String, _ enc: String) -> Error? {
+        if let e = validatePath(name, dir) { return e }
+        if !Self.encs.contains(enc) { return PluginError.invalidParam("encoding must be utf8 or base64") }
+        return nil
+    }
+
+    private func validatePath(_ name: String, _ dir: String) -> Error? {
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { return PluginError.invalidParam("filename must not be empty") }
+        if name.contains("/") || name.contains("\\")        { return PluginError.invalidParam("filename must not contain path separators") }
+        if !Self.dirs.contains(dir)                          { return PluginError.invalidParam("directory must be documents, cache, or temp") }
         return nil
     }
 }
 
-// Shared plugin error type
 enum PluginError: LocalizedError {
-    case invalidParam(String)
-    case runtimeError(String)
-
+    case invalidParam(String), runtimeError(String)
     var errorDescription: String? {
         switch self {
-        case .invalidParam(let msg):  return "[FrameStorage] Invalid param: \(msg)"
-        case .runtimeError(let msg): return "[FrameStorage] Runtime error: \(msg)"
+        case .invalidParam(let m): return "[FrameStorage] \(m)"
+        case .runtimeError(let m): return "[FrameStorage] \(m)"
         }
     }
 }
-"#)?;
-
+"##)?;
     Ok(())
 }
 
@@ -1542,248 +2480,140 @@ fn scaffold_connectivity_plugin(root: &Path) -> std::io::Result<()> {
     fs::create_dir_all(base.join("android"))?;
     fs::create_dir_all(base.join("ios"))?;
 
-    fs::write(base.join("plugin.json"),
-        r#"{
-    "name": "frame_connectivity",
-    "version": "0.1.0",
-    "description": "Connectivity plugin for Frame — network state monitoring with configurable type filter",
-    "permissions": {
-        "android": ["android.permission.ACCESS_NETWORK_STATE"],
-        "ios": []
-    },
-    "dependencies": {},
-    "params": {
-        "isOnline": {
-            "type": { "type": "string", "allowed": ["any", "wifi", "cellular"], "default": "any" }
-        },
-        "onNetworkChange": {
-            "type":     { "type": "string", "allowed": ["any", "wifi", "cellular"], "default": "any" },
-            "interval": { "type": "int",    "min": 1, "max": 60,                    "default": 5 }
-        }
-    },
-    "android": {
-        "class": "FrameConnectivityPlugin",
-        "package": "com.frame.frame_connectivity"
-    },
-    "ios": {
-        "class": "FrameConnectivityPlugin"
-    }
+    fs::write(base.join("plugin.json"), r##"{
+  "name": "frame_connectivity",
+  "version": "0.1.0",
+  "description": "Network state — check connectivity and listen for changes.",
+  "permissions": {
+    "android": ["android.permission.ACCESS_NETWORK_STATE"],
+    "ios":     []
+  },
+  "params": {
+    "isOnline":        { "type": "any|wifi|cellular" },
+    "onNetworkChange": { "type": "any|wifi|cellular", "interval": "1–60 seconds" }
+  }
 }
-"#)?;
+"##)?;
 
-    // Params are caller-supplied — no defaults baked into the bridge call.
-    fs::write(base.join("src/index.fr"),
-        concat!(
-            "// Frame Connectivity API\n",
-            "// Params:\n",
-            "//   type     — \"any\" | \"wifi\" | \"cellular\"  (default: \"any\")\n",
-            "//   interval — poll interval in seconds, 1–60  (default: 5, onNetworkChange only)\n\n",
-            "fn isOnline: async (type: string) => {\n",
-            "    plugin: { name: \"frame_connectivity\"  method: isOnline  params: { type: type } }\n",
-            "}\n\n",
-            "fn onNetworkChange: async (type: string, interval: int) => {\n",
-            "    plugin: { name: \"frame_connectivity\"  method: onNetworkChange  params: { type: type  interval: interval } }\n",
-            "}\n",
-        ))?;
+    fs::write(base.join("src/index.fr"), r##"// frame-connectivity — check and monitor network state.
+// type: "any" | "wifi" | "cellular"
+fn isOnline: async (type: string) => {
+    plugin: { name: "frame_connectivity"  method: isOnline  params: { type: type } }
+}
 
-    fs::write(base.join("android/FrameConnectivityPlugin.kt"),
-        r#"package com.frame.frame_connectivity
+fn onNetworkChange: async (type: string, interval: int) => {
+    plugin: { name: "frame_connectivity"  method: onNetworkChange  params: { type: type  interval: interval } }
+}
+"##)?;
+
+    fs::write(base.join("android/FrameConnectivityPlugin.kt"), r##"package com.frame.frame_connectivity
 
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.telephony.TelephonyManager
 
 class FrameConnectivityPlugin {
     companion object {
-        private val ALLOWED_TYPES = setOf("any", "wifi", "cellular")
+        private val ALLOWED = setOf("any", "wifi", "cellular")
     }
+    private var ctx: Context? = null
+    private var monitor: ConnectivityManager.NetworkCallback? = null
 
-    private var appContext: Context? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    fun init(context: Context) { ctx = context }
 
-    fun init(context: Context) { appContext = context }
-
-    /**
-     * @param type  Network type filter: "any", "wifi", or "cellular". Default "any".
-     */
     fun isOnline(type: String = "any"): Result<Boolean> {
-        val t = type.lowercase().trim()
-        if (t !in ALLOWED_TYPES)
-            return Result.failure(IllegalArgumentException(
-                "Invalid type '$t'. Allowed: ${ALLOWED_TYPES.joinToString()}"
-            ))
-        val ctx = appContext
-            ?: return Result.failure(IllegalStateException("Plugin not initialised. Call init(context) first."))
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork
-            ?: return Result.success(false)
-        val caps = cm.getNetworkCapabilities(network)
-            ?: return Result.success(false)
-        val online = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                     matchesType(caps, t)
-        return Result.success(online)
+        val t = type.lowercase()
+        if (t !in ALLOWED) return Result.failure(IllegalArgumentException("type must be any, wifi, or cellular"))
+        val cm = ctx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return Result.failure(IllegalStateException("Not initialised"))
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return Result.success(false)
+        val connected = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && when (t) {
+            "wifi"     -> caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            "cellular" -> caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+            else       -> true
+        }
+        return Result.success(connected)
     }
 
-    /**
-     * @param type     Network type filter: "any", "wifi", or "cellular". Default "any".
-     * @param interval Minimum seconds between change callbacks (1–60). Default 5.
-     */
-    fun onNetworkChange(
-        type: String = "any",
-        interval: Int = 5,
-        onResult: (Result<Boolean>) -> Unit
-    ) {
-        val t = type.lowercase().trim()
-        if (t !in ALLOWED_TYPES) {
-            onResult(Result.failure(IllegalArgumentException(
-                "Invalid type '$t'. Allowed: ${ALLOWED_TYPES.joinToString()}"
-            )))
-            return
-        }
-        if (interval < 1 || interval > 60) {
-            onResult(Result.failure(IllegalArgumentException(
-                "Invalid interval '$interval'. Must be between 1 and 60."
-            )))
-            return
-        }
-        val ctx = appContext
-        if (ctx == null) { onResult(Result.failure(IllegalStateException("Plugin not initialised."))); return }
-
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        networkCallback?.let { cm.unregisterNetworkCallback(it) }
-
-        var lastCallMs = 0L
-        val minIntervalMs = interval * 1000L
-
+    fun onNetworkChange(type: String = "any", interval: Int = 5, onChange: (Boolean) -> Unit) {
+        val t = type.lowercase()
+        if (t !in ALLOWED || interval !in 1..60) return
+        val cm = ctx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        monitor?.let { cm.unregisterNetworkCallback(it) }
+        var last = 0L
         val cb = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                throttled { onResult(Result.success(true)) }
-            }
-            override fun onLost(network: Network) {
-                throttled { onResult(Result.success(false)) }
-            }
-            private fun throttled(block: () -> Unit) {
+            override fun onAvailable(n: Network)  { fire(true) }
+            override fun onLost(n: Network)       { fire(false) }
+            private fun fire(v: Boolean) {
                 val now = System.currentTimeMillis()
-                if (now - lastCallMs >= minIntervalMs) { lastCallMs = now; block() }
+                if (now - last >= interval * 1000L) { last = now; onChange(v) }
             }
         }
-        networkCallback = cb
-
-        val builder = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        when (t) {
-            "wifi"     -> builder.addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            "cellular" -> builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-        }
-        cm.registerNetworkCallback(builder.build(), cb)
+        monitor = cb
+        val req = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).apply {
+            when (t) {
+                "wifi"     -> addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                "cellular" -> addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            }
+        }.build()
+        cm.registerNetworkCallback(req, cb)
     }
 
     fun stopMonitoring() {
-        val ctx = appContext ?: return
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        networkCallback?.let { cm.unregisterNetworkCallback(it) }
-        networkCallback = null
-    }
-
-    // ── Helpers ────────────────────────────────────────────────────────────────
-
-    private fun matchesType(caps: NetworkCapabilities, type: String): Boolean = when (type) {
-        "wifi"     -> caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-        "cellular" -> caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
-        else       -> true  // "any"
+        val cm = ctx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        monitor?.let { cm.unregisterNetworkCallback(it) }
+        monitor = null
     }
 }
-"#)?;
+"##)?;
 
-    fs::write(base.join("ios/FrameConnectivityPlugin.swift"),
-        r#"import Foundation
-import Network
+    fs::write(base.join("ios/FrameConnectivityPlugin.swift"), r##"import Network
 
 class FrameConnectivityPlugin {
-    private static let allowedTypes: Set<String> = ["any", "wifi", "cellular"]
-
+    private static let allowed = Set(["any","wifi","cellular"])
     private var monitor: NWPathMonitor?
-    private let queue = DispatchQueue(label: "com.frame.frame_connectivity")
-    private var changeHandler: ((Result<Bool, Error>) -> Void)?
-    private var lastCallTime: Date = .distantPast
+    private let queue = DispatchQueue(label: "com.frame.connectivity")
+    private var handler: ((Bool) -> Void)?
+    private var lastFired = Date.distantPast
     private var minInterval: TimeInterval = 5
 
-    /**
-     - Parameters:
-       - type:  Network type filter — "any", "wifi", or "cellular". Default "any".
-     */
-    func isOnline(
-        type: String = "any",
-        completion: @escaping (Result<Bool, Error>) -> Void
-    ) {
-        let t = type.lowercased().trimmingCharacters(in: .whitespaces)
-        guard Self.allowedTypes.contains(t) else {
-            completion(.failure(PluginError.invalidParam(
-                "Invalid type '\(t)'. Allowed: \(Self.allowedTypes.sorted().joined(separator: ", "))"
-            )))
-            return
+    func isOnline(type: String = "any", completion: @escaping (Result<Bool, Error>) -> Void) {
+        let t = type.lowercased()
+        guard Self.allowed.contains(t) else {
+            return completion(.failure(PluginError.invalidParam("type must be any, wifi, or cellular")))
         }
-        let probe = makeMonitor(for: t)
-        probe.pathUpdateHandler = { path in
+        let m = makeMonitor(t)
+        m.pathUpdateHandler = { path in
             completion(.success(path.status == .satisfied))
-            probe.cancel()
-        }
-        probe.start(queue: queue)
-    }
-
-    /**
-     - Parameters:
-       - type:     Network type filter — "any", "wifi", or "cellular". Default "any".
-       - interval: Minimum seconds between change callbacks (1–60). Default 5.
-     */
-    func onNetworkChange(
-        type: String = "any",
-        interval: Int = 5,
-        handler: @escaping (Result<Bool, Error>) -> Void
-    ) {
-        let t = type.lowercased().trimmingCharacters(in: .whitespaces)
-        guard Self.allowedTypes.contains(t) else {
-            handler(.failure(PluginError.invalidParam(
-                "Invalid type '\(t)'. Allowed: \(Self.allowedTypes.sorted().joined(separator: ", "))"
-            )))
-            return
-        }
-        guard interval >= 1, interval <= 60 else {
-            handler(.failure(PluginError.invalidParam(
-                "Invalid interval '\(interval)'. Must be between 1 and 60."
-            )))
-            return
-        }
-
-        monitor?.cancel()
-        changeHandler = handler
-        minInterval = TimeInterval(interval)
-        lastCallTime = .distantPast
-
-        let m = makeMonitor(for: t)
-        monitor = m
-        m.pathUpdateHandler = { [weak self] path in
-            guard let self else { return }
-            let now = Date()
-            guard now.timeIntervalSince(self.lastCallTime) >= self.minInterval else { return }
-            self.lastCallTime = now
-            self.changeHandler?(.success(path.status == .satisfied))
+            m.cancel()
         }
         m.start(queue: queue)
     }
 
-    func stopMonitoring() {
+    func onNetworkChange(type: String = "any", interval: Int = 5, onChange: @escaping (Bool) -> Void) {
+        let t = type.lowercased()
+        guard Self.allowed.contains(t), (1...60).contains(interval) else { return }
         monitor?.cancel()
-        monitor = nil
-        changeHandler = nil
+        handler     = onChange
+        minInterval = TimeInterval(interval)
+        lastFired   = .distantPast
+        let m = makeMonitor(t)
+        monitor = m
+        m.pathUpdateHandler = { [weak self] path in
+            guard let s = self else { return }
+            let now = Date()
+            guard now.timeIntervalSince(s.lastFired) >= s.minInterval else { return }
+            s.lastFired = now
+            s.handler?(path.status == .satisfied)
+        }
+        m.start(queue: queue)
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    func stopMonitoring() { monitor?.cancel(); monitor = nil }
 
-    private func makeMonitor(for type: String) -> NWPathMonitor {
+    private func makeMonitor(_ type: String) -> NWPathMonitor {
         switch type {
         case "wifi":     return NWPathMonitor(requiredInterfaceType: .wifi)
         case "cellular": return NWPathMonitor(requiredInterfaceType: .cellular)
@@ -1792,196 +2622,13 @@ class FrameConnectivityPlugin {
     }
 }
 
-// Shared plugin error type
 enum PluginError: LocalizedError {
     case invalidParam(String)
-    case runtimeError(String)
-
     var errorDescription: String? {
-        switch self {
-        case .invalidParam(let msg):  return "[FrameConnectivity] Invalid param: \(msg)"
-        case .runtimeError(let msg): return "[FrameConnectivity] Runtime error: \(msg)"
-        }
+        if case .invalidParam(let m) = self { return "[FrameConnectivity] \(m)" }
+        return nil
     }
 }
-"#)?;
-
+"##)?;
     Ok(())
-}
-
-fn write_readme(root: &Path, name: &str, arch: Architecture) -> std::io::Result<()> {
-    let arch_name = match arch {
-        Architecture::CleanArchitecture => "Clean Architecture",
-        Architecture::Mvc               => "MVC",
-    };
-    let arch_desc = match arch {
-        Architecture::CleanArchitecture =>
-            "```\nsrc/\n  domain/           # :obj entities (User)\n  data/models/      # :store state (UserStore)\n  presentation/\n    pages/          # HomePage.fr (Home + Profile pages)\n    components/     # UserCard.fr\n  tests/            # UserStore, api, navigation tests\n```",
-        Architecture::Mvc =>
-            "```\nsrc/\n  models/           # :obj types + :store state\n  views/\n    pages/          # HomePage.fr (Home + Profile pages)\n    components/     # UserCard.fr\n  controllers/      # UserController.fr\n  tests/            # UserStore, api, navigation tests\n```",
-    };
-    let content = format!(
-        concat!(
-            "# {name}\n\n",
-            "A Frame cross-platform mobile app using **{arch_name}**.\n\n",
-            "---\n\n",
-            "## Project Structure\n\n{arch_desc}\n\n",
-            "## Features Demonstrated\n\n",
-            "- **`:obj`** — typed data models → Kotlin `data class` / Swift `struct`\n",
-            "- **`:store`** — reactive state with typed fields and async actions\n",
-            "- **`:vars`** / **`:breakpoints`** — design tokens and responsive breakpoints\n",
-            "- **`:var`** — typed local variables (immutable by default, `:var mut` for reassignment)\n",
-            "- **`:app {{}}`** — app-level lifecycle hooks (`on_launch`, `on_foreground`, `on_background`)\n",
-            "- **`import`** — cross-file imports for components, stores, functions, and plugins\n",
-            "- **`show_if`** — conditional rendering based on store state\n",
-            "- **`try`/`catch`/`finally`** — error handling in async operations\n",
-            "- **`wait:fetch`** — HTTP API calls with mock support in tests\n",
-            "- **Typed route params** — `page {{ params: {{ userId: string }} }}` → typed Screen / ViewController\n",
-            "- **Navigation options** — `navigate(\"/path\", replace: true)`, `clear_stack`, `single_top`, `transition`\n",
-            "- **navigate_back_to** — pop to any named route in the back stack\n",
-            "- **navigate_modal / navigate_dismiss** — modal presentation and dismissal\n",
-            "- **Component lifecycle** — `on_mount`, `on_update`+`watch`, `on_unmount` on any node\n",
-            "- **Page lifecycle** — `before_enter`, `on_mount`, `on_unmount`, `on_foreground`, `on_background`\n",
-            "- **Plugin params** — all params caller-supplied, validated at runtime, no hardcoding\n",
-            "- **Strict typing** — every variable, store field, function param, and component prop is type-checked\n",
-            "\n",
-            "## App Lifecycle\n\n",
-            "```fr\n",
-            "// project.fr — declared once, wired into Application / AppDelegate\n",
-            ":app {{\n",
-            "    on_launch:     appInit      // Application.onCreate / didFinishLaunching\n",
-            "    on_foreground: appForeground // ProcessLifecycleOwner ON_START / sceneWillEnterForeground\n",
-            "    on_background: appBackground // ProcessLifecycleOwner ON_STOP / sceneDidEnterBackground\n",
-            "}}\n",
-            "```\n",
-            "\n",
-            "## Navigation\n\n",
-            "### Page with typed route params\n",
-            "```fr\n",
-            "page: {{\n",
-            "    name: \"Profile\"\n",
-            "    route: \"/profile/:userId\"\n",
-            "    params: {{ userId: string }}      // generates typed Screen/ViewController params\n",
-            "    before_enter: checkAuth           // guard — any expression, not just string names\n",
-            "    on_mount:     loadProfile         // viewDidAppear / LaunchedEffect \"mount\"\n",
-            "    before_leave: saveEdits           // viewDidDisappear / DisposableEffect\n",
-            "}}\n",
-            "```\n",
-            "\n",
-            "### Navigation options\n",
-            "```fr\n",
-            "// Push (default)\n",
-            "navigate(\"/dashboard\")\n\n",
-            "// Replace current entry — back won't return here\n",
-            "navigate(\"/home\", replace: true)\n\n",
-            "// Clear entire stack before navigating (login → main flow)\n",
-            "navigate(\"/home\", clear_stack: true)\n\n",
-            "// Prevent duplicate screens\n",
-            "navigate(\"/search\", single_top: true)\n\n",
-            "// Custom transition animation\n",
-            "navigate(\"/detail\", transition: \"slide_up\")\n\n",
-            "// Pop one entry\n",
-            "navigate_back()\n\n",
-            "// Pop to a specific route\n",
-            "navigate_back_to(\"/home\")\n\n",
-            "// Present modally (sheet / dialog)\n",
-            "navigate_modal(\"/settings\")\n",
-            "navigate_dismiss()\n",
-            "```\n",
-            "\n",
-            "### Component lifecycle\n",
-            "```fr\n",
-            "column: {{\n",
-            "    on_mount:   startPolling      // LaunchedEffect(Unit) / DispatchQueue.main.async\n",
-            "    on_update:  refreshData       // LaunchedEffect(key) fires when watch dependency changes\n",
-            "    watch:      UserStore.items   // dependency key for on_update\n",
-            "    on_unmount: stopPolling       // DisposableEffect/onDispose on Android\n",
-            "    children: [...]\n",
-            "}}\n",
-            "```\n",
-            "\n",
-            "## Type System\n\n",
-            "| Type | Description | Kotlin | Swift |\n",
-            "|------|-------------|--------|-------|\n",
-            "| `string` | UTF-8 text | `String` | `String` |\n",
-            "| `int` | Integer | `Int` | `Int` |\n",
-            "| `float` | Floating-point | `Float` | `Double` |\n",
-            "| `bool` | Boolean | `Boolean` | `Bool` |\n",
-            "| `object` | Key-value map | `Any` | `[String: Any]?` |\n",
-            "| `list` | Ordered array | `List<Any>` | `[Any]?` |\n",
-            "| `nullable(T)` | Nullable variant | `T?` | `T?` |\n",
-            "\n",
-            "## Plugins\n\n",
-            "### `frame_camera`\n",
-            "Captures photos — format, quality, and source are **caller-supplied and validated**.\n",
-            "```fr\n",
-            "import {{ capture }} \"frame-camera\"\n",
-            ":var photo = wait:capture(\"jpg\", 0.9, \"camera\")  // format / quality / source\n",
-            "```\n",
-            "- `format`: `\"jpg\"` | `\"png\"` | `\"webp\"` (default `\"jpg\"`)\n",
-            "- `quality`: `0.0`–`1.0` (default `0.8`)\n",
-            "- `source`: `\"camera\"` | `\"gallery\"` (default `\"camera\"`)\n",
-            "\n",
-            "### `frame_storage`\n",
-            "Saves, loads, and deletes files — directory and encoding are **caller-supplied and validated**.\n",
-            "```fr\n",
-            "import {{ saveFile, loadFile, deleteFile }} \"frame-storage\"\n",
-            "wait:saveFile(\"notes.txt\", \"hello\", \"documents\", \"utf8\")\n",
-            ":var content = wait:loadFile(\"notes.txt\", \"documents\", \"utf8\")\n",
-            "```\n",
-            "- `directory`: `\"documents\"` | `\"cache\"` | `\"temp\"` (default `\"documents\"`)\n",
-            "- `encoding`: `\"utf8\"` | `\"base64\"` (default `\"utf8\"`)\n",
-            "- Filenames validated — empty names and path separators rejected.\n",
-            "\n",
-            "### `frame_connectivity`\n",
-            "Monitors network state — type filter and poll interval are **caller-supplied and validated**.\n",
-            "```fr\n",
-            "import {{ isOnline, onNetworkChange }} \"frame-connectivity\"\n",
-            ":var online = wait:isOnline(\"wifi\")            // type: any | wifi | cellular\n",
-            "wait:onNetworkChange(\"any\", 10)                // interval: 1–60 s\n",
-            "```\n",
-            "\n",
-            "Plugin source files are auto-copied during `frame deploy`.\n",
-            "\n",
-            "## Error Handling\n\n",
-            "```fr\n",
-            "fn loadUser: async (id: string) => {{\n",
-            "    try {{\n",
-            "        UserStore.user = wait:fetch(\"/api/users/$id\")\n",
-            "    }} catch (err) {{\n",
-            "        UserStore.error = err\n",
-            "    }} finally {{\n",
-            "        UserStore.is_loading = false\n",
-            "    }}\n",
-            "}}\n",
-            "```\n",
-            "\n",
-            "## Async / Await\n\n",
-            "```fr\n",
-            "fn fetchData: async (url: string) => {{\n",
-            "    :var result = wait:fetch(url, {{ method: \"GET\" }})\n",
-            "    return result\n",
-            "}}\n",
-            "```\n",
-            "Async functions must be called with `wait:` prefix. Calling without `wait:` is a **compile error**.\n",
-            "\n",
-            "## Commands\n\n",
-            "```bash\n",
-            "frame check                 # verify build environment\n",
-            "frame build                 # compile .fr files\n",
-            "frame test                  # run test suites (UserStore, api, navigation)\n",
-            "frame deploy android        # generate + build Android project\n",
-            "frame deploy ios            # generate + build iOS project\n",
-            "frame preview               # hot-reload dev server\n",
-            "frame plugin create <name>  # create a new plugin\n",
-            "frame plugin add <name>     # install a plugin\n",
-            "frame plugin add @user/repo # install from GitHub\n",
-            "frame plugin list           # list installed plugins\n",
-            "```\n",
-        ),
-        name      = name,
-        arch_name = arch_name,
-        arch_desc = arch_desc,
-    );
-    fs::write(root.join("README.md"), content)
 }

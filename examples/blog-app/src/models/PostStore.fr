@@ -1,0 +1,130 @@
+// PostStore — blog post state with pagination, search, likes, and optimistic updates.
+:store PostStore {
+    posts:         list    = []
+    selected_post: object? = null
+    draft_title:   string  = ""
+    draft_body:    string  = ""
+    draft_tags:    list    = []
+    search_query:  string  = ""
+    filter:        string  = "all"      // "all" | "published" | "drafts" | "liked"
+    sort:          string  = "newest"   // "newest" | "oldest" | "popular"
+    page:          int     = 1
+    per_page:      int     = 20
+    total:         int     = 0
+    has_more:      bool    = true
+    is_loading:    bool    = false
+    is_saving:     bool    = false
+    error:         string  = ""
+    save_error:    string  = ""
+
+    fn load: async () => {
+        PostStore.is_loading = true
+        PostStore.error      = ""
+        PostStore.page       = 1
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/posts?page=1&per_page=$PostStore.per_page&sort=$PostStore.sort&filter=$PostStore.filter", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok != true {
+                PostStore.error = "Failed to load posts"
+                return
+            }
+            PostStore.posts    = res.data.posts
+            PostStore.total    = res.data.total
+            PostStore.has_more = res.data.posts.length == PostStore.per_page
+        } catch (err) {
+            PostStore.error = "Network error loading posts"
+        }
+        PostStore.is_loading = false
+    }
+
+    fn loadMore: async () => {
+        if PostStore.is_loading || !PostStore.has_more { return }
+        PostStore.is_loading = true
+        try {
+            :var next = PostStore.page + 1
+            :var res  = wait:fetch("https://api.example.com/v1/posts?page=$next&per_page=$PostStore.per_page&sort=$PostStore.sort", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok != true { return }
+            PostStore.posts    = PostStore.posts.concat(res.data.posts)
+            PostStore.page     = next
+            PostStore.has_more = res.data.posts.length == PostStore.per_page
+        } catch (err) {
+            PostStore.error = "Failed to load more posts"
+        }
+        PostStore.is_loading = false
+    }
+
+    fn search: async (query: string) => {
+        PostStore.search_query = query
+        if query.trim().length < 2 {
+            wait:PostStore.load()
+            return
+        }
+        PostStore.is_loading = true
+        PostStore.error      = ""
+        try {
+            :var encoded = query.url_encode()
+            :var res = wait:fetch("https://api.example.com/v1/posts/search?q=$encoded", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok != true { PostStore.error = "Search failed"; return }
+            PostStore.posts = res.data.posts
+            PostStore.total = res.data.total
+        } catch (err) {
+            PostStore.error = "Search failed. Try again."
+        }
+        PostStore.is_loading = false
+    }
+
+    fn selectPost: async (id: string) => {
+        // Use cached version first, fetch fresh in background
+        :var cached = PostStore.posts.find((p) => p.id == id)
+        if cached != null { PostStore.selected_post = cached }
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/posts/$id", {
+                method: "GET"
+                headers: { Accept: "application/json" }
+            })
+            if res.ok == true { PostStore.selected_post = res.data }
+        } catch (err) {
+            if cached == null { PostStore.error = "Could not load post" }
+        }
+    }
+
+    fn like: async (id: string) => {
+        // Optimistic update
+        PostStore.posts = PostStore.posts.map((p) => {
+            if p.id == id { return { ...p  like_count: p.like_count + 1 } }
+            return p
+        })
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/posts/$id/like", {
+                method: "POST"
+            })
+            if res.ok != true {
+                // Revert on failure
+                PostStore.posts = PostStore.posts.map((p) => {
+                    if p.id == id { return { ...p  like_count: p.like_count - 1 } }
+                    return p
+                })
+            }
+        } catch (err) {
+            log.warn("Like failed: $err")
+        }
+    }
+
+    fn setFilter: async (filter: string) => {
+        PostStore.filter = filter
+        wait:PostStore.load()
+    }
+
+    fn setSort: async (sort: string) => {
+        PostStore.sort = sort
+        wait:PostStore.load()
+    }
+}

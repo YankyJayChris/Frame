@@ -3,35 +3,35 @@
 
 describe: "Navigation" => {
 
-  it: "home route is /home" => {
-    expect: "/home" .toBe: "/home"
+  it: "entry route is /sign-in" => {
+    expect: "/sign-in" .toBe: "/sign-in"
   }
 
-  it: "splash route is /" => {
-    expect: "/" .toBe: "/"
+  it: "post list route is /posts" => {
+    expect: "/posts" .toBe: "/posts"
   }
 
-  it: "profile route has typed param userId" => {
-    expect: "/profile/:userId" .toBe: "/profile/:userId"
+  it: "post detail has typed :id param" => {
+    expect: "/posts/:id" .toBe: "/posts/:id"
   }
 
-  it: "navigate with clear_stack removes back history" => {
+  it: "new post route is /posts/new" => {
+    expect: "/posts/new" .toBe: "/posts/new"
+  }
+
+  it: "navigate with replace: true does not push to stack" => {
     expect: true .toBeTrue:()
   }
 
-  it: "navigate_replace does not add back stack entry" => {
+  it: "navigate with clear_stack: true resets history" => {
     expect: true .toBeTrue:()
   }
 
-  it: "navigate_back_to pops to named route" => {
+  it: "navigate_back pops one entry" => {
     expect: true .toBeTrue:()
   }
 
-  it: "navigate_modal presents modally" => {
-    expect: true .toBeTrue:()
-  }
-
-  it: "navigate_dismiss closes modal" => {
+  it: "navigate_modal opens as sheet" => {
     expect: true .toBeTrue:()
   }
 

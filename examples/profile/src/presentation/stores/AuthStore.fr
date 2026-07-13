@@ -1,0 +1,60 @@
+// AuthStore — manages auth session and persists token across restarts.
+import { saveFile, loadFile } "frame-storage"
+
+:store AuthStore {
+    user:          object? = null
+    token:         string  = ""
+    is_loading:    bool    = false
+    error:         string  = ""
+    is_signed_in:  bool    = false
+
+    fn init: async () => {
+        // Restore session from device storage on app launch
+        try {
+            :var stored = wait:loadFile("session.json", "documents", "utf8")
+            if stored != "" {
+                :var session = stored.parse_json()
+                AuthStore.token        = session.token
+                AuthStore.user         = session.user
+                AuthStore.is_signed_in = true
+            }
+        } catch (err) {
+            // No stored session — fresh start, not an error
+            log.debug("No stored session: $err")
+        }
+    }
+
+    fn signIn: async (email: string, password: string) => {
+        AuthStore.is_loading = true
+        AuthStore.error      = ""
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/auth/login", {
+                method: "POST"
+                headers: { Content-Type: "application/json" }
+                body: { email: email  password: password }
+            })
+            if res.ok != true {
+                AuthStore.error = res.data.message || "Sign in failed"
+                return
+            }
+            AuthStore.token        = res.data.token
+            AuthStore.user         = res.data.user
+            AuthStore.is_signed_in = true
+            // Persist session
+            :var session = { token: res.data.token  user: res.data.user }
+            wait:saveFile("session.json", session.to_json(), "documents", "utf8")
+        } catch (err) {
+            AuthStore.error = "Network error. Please check your connection."
+        }
+        AuthStore.is_loading = false
+    }
+
+    fn signOut: async () => {
+        AuthStore.user         = null
+        AuthStore.token        = ""
+        AuthStore.is_signed_in = false
+        AuthStore.error        = ""
+        wait:saveFile("session.json", "", "documents", "utf8")
+        navigate("/sign-in", clear_stack: true)
+    }
+}

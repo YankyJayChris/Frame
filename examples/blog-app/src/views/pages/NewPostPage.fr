@@ -1,0 +1,115 @@
+// NewPostPage — create a new blog post with live validation.
+import { scaffold, app_bar, column, row, text, button, input, icon, progress_bar, divider } "frame-core"
+import { PostStore } "../../models/PostStore.fr"
+import { submitPost } "../../controllers/PostController.fr"
+import { capture } "frame-camera"
+
+:var title:      string = ""
+:var body:       string = ""
+:var tags_input: string = ""
+:var photo_path: string = ""
+
+page: {
+    name: "NewPost"
+    route: "/posts/new"
+    on_unmount: clearDraft
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                app_bar: {
+                    title: "New Post"
+                    leading: "xmark"
+                    on_leading_click: navigate_back()
+                    children: [
+                        button: {
+                            content: "Publish"
+                            variant: "text"
+                            styles: { color: "#bcf970"  font_weight: "bold" }
+                            on_click: submitPost(title, body, tags_input)
+                            disabled: PostStore.is_saving || title.trim().length == 0
+                        }
+                    ]
+                }
+                column: {
+                    styles: { padding: 16dp  gap: 12dp  overflow: scroll }
+                    children: [
+                        input: {
+                            value: title
+                            placeholder: "Post title..."
+                            on_change: (v) => { title = v }
+                            styles: { font_size: 20sp  font_weight: "bold"  border: none }
+                            max_length: 120
+                        }
+                        row: {
+                            styles: { align: "center"  justify: "space_between" }
+                            children: [
+                                text: {
+                                    content: "$title.length / 120"
+                                    styles: { font_size: 11sp  color: title.length > 100 ? "#f59e0b" : "#bbb" }
+                                }
+                            ]
+                        }
+                        divider: {}
+                        input: {
+                            value: body
+                            placeholder: "Write your post..."
+                            on_change: (v) => { body = v }
+                            multiline: true
+                            min_lines: 8
+                            styles: { font_size: 15sp  line_height: 1.6  border: none }
+                        }
+                        divider: {}
+                        input: {
+                            value: tags_input
+                            placeholder: "Tags (comma-separated, max 5)"
+                            on_change: (v) => { tags_input = v }
+                            styles: { font_size: 13sp }
+                        }
+                        // Attach photo
+                        row: {
+                            styles: { gap: 12dp  align: "center" }
+                            children: [
+                                button: {
+                                    content: "Attach Photo"
+                                    variant: "outlined"
+                                    on_click: attachPhoto()
+                                    children: [
+                                        icon: { name: "camera"  size: 16  color: "#555" }
+                                    ]
+                                }
+                                text: {
+                                    content: photo_path != "" ? "Photo attached ✓" : ""
+                                    styles: { font_size: 13sp  color: "#bcf970" }
+                                }
+                            ]
+                        }
+                        // Validation error
+                        text: {
+                            content: PostStore.save_error
+                            styles: { color: "#dc2626"  font_size: 13sp }
+                            show_if: PostStore.save_error != ""
+                        }
+                        progress_bar: {
+                            value: -1
+                            show_if: PostStore.is_saving
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+fn attachPhoto: async () => {
+    try {
+        :var path = wait:capture("jpg", 0.85, "camera")
+        photo_path = path
+    } catch (err) {
+        log.warn("Photo capture cancelled: $err")
+    }
+}
+
+fn clearDraft: () => {
+    PostStore.save_error = ""
+}

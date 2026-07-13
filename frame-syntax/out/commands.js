@@ -38,27 +38,29 @@ const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 function getFrameBinary() {
-    return vscode.workspace.getConfiguration('frame').get('path') || 'frame';
+    return (vscode.workspace.getConfiguration("frame").get("path") || "frame");
 }
 function getWorkspaceRoot() {
-    const configured = vscode.workspace.getConfiguration('frame').get('workspaceRoot');
+    const configured = vscode.workspace
+        .getConfiguration("frame")
+        .get("workspaceRoot");
     if (configured)
         return configured;
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
 }
 function runInTerminal(args) {
     const terminal = vscode.window.createTerminal({
-        name: 'Frame',
+        name: "Frame",
         shellPath: getFrameBinary(),
         shellArgs: args,
-        iconPath: new vscode.ThemeIcon('symbol-color'),
+        iconPath: new vscode.ThemeIcon("symbol-color"),
     });
     terminal.show();
 }
 async function scaffoldFile(name, template, relativeDir) {
     const root = getWorkspaceRoot();
     if (!root) {
-        vscode.window.showErrorMessage('No workspace folder open.');
+        vscode.window.showErrorMessage("No workspace folder open.");
         return;
     }
     const targetDir = path.join(root, relativeDir);
@@ -70,131 +72,138 @@ async function scaffoldFile(name, template, relativeDir) {
         vscode.window.showErrorMessage(`File ${name}.fr already exists in ${relativeDir}.`);
         return;
     }
-    fs.writeFileSync(filePath, template, 'utf-8');
+    fs.writeFileSync(filePath, template, "utf-8");
     const doc = await vscode.workspace.openTextDocument(filePath);
     vscode.window.showTextDocument(doc);
 }
 function registerCommands(context, client) {
     const disposables = [];
-    disposables.push(vscode.commands.registerCommand('frame.build', () => {
-        runInTerminal(['build']);
+    disposables.push(vscode.commands.registerCommand("frame.build", () => {
+        runInTerminal(["build"]);
     }));
-    disposables.push(vscode.commands.registerCommand('frame.buildWatch', () => {
-        runInTerminal(['build', '--watch']);
+    disposables.push(vscode.commands.registerCommand("frame.buildWatch", () => {
+        runInTerminal(["build", "--watch"]);
     }));
-    disposables.push(vscode.commands.registerCommand('frame.test', () => {
-        runInTerminal(['test']);
+    disposables.push(vscode.commands.registerCommand("frame.test", () => {
+        runInTerminal(["test"]);
     }));
-    disposables.push(vscode.commands.registerCommand('frame.testFilter', async () => {
-        const tests = await client.sendRequest('frame/listTests');
-        const items = tests.map(t => ({ label: t }));
+    disposables.push(vscode.commands.registerCommand("frame.testFilter", async () => {
+        const tests = await client.sendRequest("frame/listTests");
+        const items = tests.map((t) => ({ label: t }));
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: 'Select a test to run',
+            placeHolder: "Select a test to run",
         });
         if (selected) {
-            runInTerminal(['test', '--filter', selected.label]);
+            runInTerminal(["test", "--filter", selected.label]);
         }
     }));
-    disposables.push(vscode.commands.registerCommand('frame.deploy', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.deploy", async () => {
         const target = await vscode.window.showQuickPick([
-            { label: 'iOS', description: 'Deploy to iOS simulator/device' },
-            { label: 'Android', description: 'Deploy to Android emulator/device' },
-        ], { placeHolder: 'Select deployment target' });
+            { label: "iOS", description: "Deploy to iOS simulator/device" },
+            {
+                label: "Android",
+                description: "Deploy to Android emulator/device",
+            },
+        ], { placeHolder: "Select deployment target" });
         if (target) {
-            runInTerminal(['deploy', target.label.toLowerCase()]);
+            runInTerminal(["deploy", target.label.toLowerCase()]);
         }
     }));
-    disposables.push(vscode.commands.registerCommand('frame.lint', () => {
-        runInTerminal(['lint']);
+    disposables.push(vscode.commands.registerCommand("frame.lint", () => {
+        runInTerminal(["lint"]);
     }));
-    disposables.push(vscode.commands.registerCommand('frame.lintFile', () => {
+    disposables.push(vscode.commands.registerCommand("frame.lintFile", () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showWarningMessage('No active editor.');
+            vscode.window.showWarningMessage("No active editor.");
             return;
         }
         const filePath = editor.document.uri.fsPath;
-        runInTerminal(['lint', filePath]);
+        runInTerminal(["lint", filePath]);
     }));
-    disposables.push(vscode.commands.registerCommand('frame.pluginAdd', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.pluginAdd", async () => {
         const name = await vscode.window.showInputBox({
-            placeHolder: 'plugin-name',
-            prompt: 'Enter the plugin name to add',
-            validateInput: (value) => value.trim() ? null : 'Plugin name is required',
+            placeHolder: "plugin-name",
+            prompt: "Enter the plugin name to add",
+            validateInput: (value) => value.trim() ? null : "Plugin name is required",
         });
         if (name) {
-            runInTerminal(['plugin', 'add', name.trim()]);
+            runInTerminal(["plugin", "add", name.trim()]);
         }
     }));
-    disposables.push(vscode.commands.registerCommand('frame.pluginList', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.pluginList", async () => {
         try {
-            const plugins = await client.sendRequest('frame/listPlugins');
-            const items = plugins.map(p => ({
+            const plugins = await client.sendRequest("frame/listPlugins");
+            const items = plugins.map((p) => ({
                 label: p,
-                iconPath: new vscode.ThemeIcon('extensions'),
+                iconPath: new vscode.ThemeIcon("extensions"),
             }));
             if (items.length === 0) {
-                vscode.window.showInformationMessage('No plugins installed.');
+                vscode.window.showInformationMessage("No plugins installed.");
                 return;
             }
             await vscode.window.showQuickPick(items, {
-                placeHolder: 'Installed plugins',
+                placeHolder: "Installed plugins",
                 matchOnDescription: true,
             });
         }
         catch {
-            vscode.window.showErrorMessage('Failed to fetch plugin list from LSP.');
+            vscode.window.showErrorMessage("Failed to fetch plugin list from LSP.");
         }
     }));
-    disposables.push(vscode.commands.registerCommand('frame.iconList', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.iconList", async () => {
         try {
-            const icons = await client.sendRequest('frame/listIcons');
-            const items = icons.map(i => ({
+            const icons = await client.sendRequest("frame/listIcons");
+            const items = icons.map((i) => ({
                 label: i,
-                iconPath: new vscode.ThemeIcon('symbol-icon'),
+                iconPath: new vscode.ThemeIcon("symbol-icon"),
             }));
             if (items.length === 0) {
-                vscode.window.showInformationMessage('No icons registered.');
+                vscode.window.showInformationMessage("No icons registered.");
                 return;
             }
             const selected = await vscode.window.showQuickPick(items, {
-                placeHolder: 'Registered icons',
+                placeHolder: "Registered icons",
                 matchOnDescription: true,
             });
             if (selected && vscode.window.activeTextEditor) {
-                vscode.window.activeTextEditor.edit(edit => {
+                vscode.window.activeTextEditor.edit((edit) => {
                     const pos = vscode.window.activeTextEditor.selection.active;
                     edit.insert(pos, selected.label);
                 });
             }
         }
         catch {
-            vscode.window.showErrorMessage('Failed to fetch icon list from LSP.');
+            vscode.window.showErrorMessage("Failed to fetch icon list from LSP.");
         }
     }));
-    disposables.push(vscode.commands.registerCommand('frame.iconGenerate', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.iconGenerate", async () => {
         const target = await vscode.window.showQuickPick([
-            { label: 'iOS', description: 'Generate iOS icons' },
-            { label: 'Android', description: 'Generate Android icons' },
-            { label: 'All', description: 'Generate icons for all platforms' },
-        ], { placeHolder: 'Select platform' });
+            { label: "iOS", description: "Generate iOS icons" },
+            { label: "Android", description: "Generate Android icons" },
+            { label: "All", description: "Generate icons for all platforms" },
+        ], { placeHolder: "Select platform" });
         if (target) {
-            const arg = target.label.toLowerCase() === 'all' ? '--all' : `--${target.label.toLowerCase()}`;
-            runInTerminal(['icons', 'generate', arg]);
+            const arg = target.label.toLowerCase() === "all"
+                ? "--all"
+                : `--${target.label.toLowerCase()}`;
+            runInTerminal(["icons", "generate", arg]);
         }
     }));
-    disposables.push(vscode.commands.registerCommand('frame.newPage', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.newPage", async () => {
         const name = await vscode.window.showInputBox({
-            placeHolder: 'HomePage',
-            prompt: 'Enter the page name (PascalCase)',
-            validateInput: (value) => /^[A-Z][a-zA-Z0-9]*$/.test(value) ? null : 'Must be PascalCase (e.g. HomePage)',
+            placeHolder: "HomePage",
+            prompt: "Enter the page name (PascalCase)",
+            validateInput: (value) => /^[A-Z][a-zA-Z0-9]*$/.test(value)
+                ? null
+                : "Must be PascalCase (e.g. HomePage)",
         });
         if (!name)
             return;
         const routeName = name
-            .replace(/([A-Z])/g, '-$1')
+            .replace(/([A-Z])/g, "-$1")
             .toLowerCase()
-            .replace(/^-/, '/');
+            .replace(/^-/, "/");
         const template = `page: {
   name: "${name}"
   route: "${routeName}"
@@ -209,13 +218,15 @@ function registerCommands(context, client) {
   ]
 }
 `;
-        await scaffoldFile(name, template, 'src/pages');
+        await scaffoldFile(name, template, "src/pages");
     }));
-    disposables.push(vscode.commands.registerCommand('frame.newComponent', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.newComponent", async () => {
         const name = await vscode.window.showInputBox({
-            placeHolder: 'MyComponent',
-            prompt: 'Enter the component name (PascalCase)',
-            validateInput: (value) => /^[A-Z][a-zA-Z0-9]*$/.test(value) ? null : 'Must be PascalCase (e.g. MyComponent)',
+            placeHolder: "MyComponent",
+            prompt: "Enter the component name (PascalCase)",
+            validateInput: (value) => /^[A-Z][a-zA-Z0-9]*$/.test(value)
+                ? null
+                : "Must be PascalCase (e.g. MyComponent)",
         });
         if (!name)
             return;
@@ -232,13 +243,15 @@ function registerCommands(context, client) {
   ]
 }
 `;
-        await scaffoldFile(name, template, 'src/components');
+        await scaffoldFile(name, template, "src/components");
     }));
-    disposables.push(vscode.commands.registerCommand('frame.newStore', async () => {
+    disposables.push(vscode.commands.registerCommand("frame.newStore", async () => {
         const name = await vscode.window.showInputBox({
-            placeHolder: 'CounterStore',
-            prompt: 'Enter the store name (PascalCase)',
-            validateInput: (value) => /^[A-Z][a-zA-Z0-9]*$/.test(value) ? null : 'Must be PascalCase (e.g. CounterStore)',
+            placeHolder: "CounterStore",
+            prompt: "Enter the store name (PascalCase)",
+            validateInput: (value) => /^[A-Z][a-zA-Z0-9]*$/.test(value)
+                ? null
+                : "Must be PascalCase (e.g. CounterStore)",
         });
         if (!name)
             return;
@@ -254,15 +267,18 @@ function registerCommands(context, client) {
   }
 }
 `;
-        await scaffoldFile(name, template, 'src/stores');
+        await scaffoldFile(name, template, "src/stores");
     }));
-    disposables.push(vscode.commands.registerCommand('frame.openDocs', () => {
-        vscode.env.openExternal(vscode.Uri.parse('https://frame-lang.org/docs'));
+    disposables.push(vscode.commands.registerCommand("frame.openDocs", () => {
+        vscode.env.openExternal(vscode.Uri.parse("https://frame-lang.org/docs"));
     }));
-    disposables.push(vscode.commands.registerCommand('frame.restartLsp', async () => {
-        vscode.window.showInformationMessage('Restarting Frame Language Server...');
+    disposables.push(vscode.commands.registerCommand("frame.openAppIconDocs", () => {
+        vscode.env.openExternal(vscode.Uri.parse("https://frame-lang.org/docs/app-icons"));
+    }));
+    disposables.push(vscode.commands.registerCommand("frame.restartLsp", async () => {
+        vscode.window.showInformationMessage("Restarting Frame Language Server...");
         await client.restart();
-        vscode.window.showInformationMessage('Frame Language Server restarted.');
+        vscode.window.showInformationMessage("Frame Language Server restarted.");
     }));
     return disposables;
 }

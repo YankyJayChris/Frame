@@ -1,0 +1,94 @@
+// PostController — business logic between views and PostStore.
+// Views call these functions; controllers validate and coordinate.
+import { PostStore } "../models/PostStore.fr"
+import { AuthStore } "../models/AuthStore.fr"
+
+fn loadFeed: async () => {
+    wait:PostStore.load()
+}
+
+fn submitPost: async (title: string, body: string, tags_input: string) => {
+    // Validation
+    :var clean_title = title.trim()
+    :var clean_body  = body.trim()
+    if clean_title.length == 0 {
+        PostStore.save_error = "Title cannot be empty"
+        return
+    }
+    if clean_title.length > 120 {
+        PostStore.save_error = "Title must be 120 characters or fewer"
+        return
+    }
+    if clean_body.length < 10 {
+        PostStore.save_error = "Body must be at least 10 characters"
+        return
+    }
+    // Parse comma-separated tags
+    :var tags = tags_input.split(",").map((t) => t.trim()).filter((t) => t.length > 0)
+    if tags.length > 5 {
+        PostStore.save_error = "Maximum 5 tags allowed"
+        return
+    }
+    wait:PostStore.create(clean_title, clean_body, tags)
+}
+
+fn deletePost: async (id: string) => {
+    if AuthStore.token == "" {
+        PostStore.error = "You must be signed in"
+        return
+    }
+    try {
+        :var res = wait:fetch("https://api.example.com/v1/posts/$id", {
+            method: "DELETE"
+            headers: { Authorization: "Bearer $AuthStore.token" }
+        })
+        if res.ok != true {
+            PostStore.error = "Failed to delete post"
+            return
+        }
+        // Remove from list
+        PostStore.posts = PostStore.posts.filter((p) => p.id != id)
+        PostStore.total = PostStore.total - 1
+        navigate_back()
+    } catch (err) {
+        PostStore.error = "Network error. Could not delete post."
+    }
+}
+
+fn updatePost: async (id: string, title: string, body: string) => {
+    :var clean_title = title.trim()
+    :var clean_body  = body.trim()
+    if clean_title.length == 0 {
+        PostStore.save_error = "Title cannot be empty"
+        return
+    }
+    if clean_body.length < 10 {
+        PostStore.save_error = "Body must be at least 10 characters"
+        return
+    }
+    PostStore.is_saving   = true
+    PostStore.save_error  = ""
+    try {
+        :var res = wait:fetch("https://api.example.com/v1/posts/$id", {
+            method: "PATCH"
+            headers: {
+                Authorization: "Bearer $AuthStore.token"
+                Content-Type:  "application/json"
+            }
+            body: { title: clean_title  body: clean_body }
+        })
+        if res.ok != true {
+            PostStore.save_error = res.data.message || "Update failed"
+            return
+        }
+        // Update in-place
+        PostStore.posts = PostStore.posts.map((p) => {
+            if p.id == id { return res.data }
+            return p
+        })
+        navigate("/posts/$id", replace: true)
+    } catch (err) {
+        PostStore.save_error = "Network error. Could not save changes."
+    }
+    PostStore.is_saving = false
+}

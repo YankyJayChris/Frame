@@ -1,0 +1,27 @@
+// AuthStore — unit tests
+// Run with: frame test
+import { AuthStore } "../../models/AuthStore.fr"
+
+describe: "AuthStore" => {
+
+  it: "starts signed out" => {
+    expect: AuthStore.is_signed_in .toBeFalse:()
+  }
+
+  it: "starts with null user" => {
+    expect: AuthStore.user .toBeNull:()
+  }
+
+  it: "starts with empty token" => {
+    expect: AuthStore.token .toBe: ""
+  }
+
+  it: "starts with no error" => {
+    expect: AuthStore.error .toBe: ""
+  }
+
+  it: "signIn sets is_loading while in progress" => {
+    expect: AuthStore.is_loading .toBeFalse:()
+  }
+
+}

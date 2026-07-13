@@ -1,0 +1,95 @@
+// PostStore — post list with pagination, search, and optimistic create.
+import { getPosts, searchPosts } "../../domain/usecases/GetPosts.fr"
+import { createPost, publishPost } "../../domain/usecases/CreatePost.fr"
+
+:store PostStore {
+    posts:          list   = []
+    selected_post:  object? = null
+    search_query:   string = ""
+    is_loading:     bool   = false
+    is_creating:    bool   = false
+    error:          string = ""
+    page:           int    = 1
+    has_more:       bool   = true
+    total_count:    int    = 0
+
+    fn load: async () => {
+        PostStore.is_loading = true
+        PostStore.error      = ""
+        PostStore.page       = 1
+        try {
+            :var result = wait:getPosts()
+            PostStore.posts       = result
+            PostStore.total_count = result.length
+            PostStore.has_more    = result.length == 20
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_loading = false
+    }
+
+    fn loadMore: async () => {
+        if PostStore.is_loading || !PostStore.has_more {
+            return
+        }
+        PostStore.is_loading = true
+        try {
+            :var next_page = PostStore.page + 1
+            :var result    = wait:getPosts()
+            PostStore.posts    = PostStore.posts.concat(result)
+            PostStore.page     = next_page
+            PostStore.has_more = result.length == 20
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_loading = false
+    }
+
+    fn search: async (query: string) => {
+        PostStore.search_query = query
+        PostStore.is_loading   = true
+        PostStore.error        = ""
+        try {
+            PostStore.posts = wait:searchPosts(query)
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_loading = false
+    }
+
+    fn create: async (title: string, body: string, tags: list) => {
+        PostStore.is_creating = true
+        PostStore.error       = ""
+        try {
+            :var new_post = wait:createPost(title, body, tags)
+            // Optimistic: prepend to list immediately
+            PostStore.posts = [new_post].concat(PostStore.posts)
+            PostStore.total_count = PostStore.total_count + 1
+            navigate("/posts/$new_post.id")
+        } catch (err) {
+            PostStore.error = err
+        }
+        PostStore.is_creating = false
+    }
+
+    fn publish: async (id: string) => {
+        try {
+            :var updated = wait:publishPost(id)
+            // Update in-place in the list
+            PostStore.posts = PostStore.posts.map((p) => {
+                if p.id == id { return updated }
+                return p
+            })
+        } catch (err) {
+            PostStore.error = err
+        }
+    }
+
+    fn selectPost: (post: object) => {
+        PostStore.selected_post = post
+    }
+
+    fn clearError: () => {
+        PostStore.error = ""
+    }
+}

@@ -1,6 +1,10 @@
+// User — core domain entity.
 :obj User {
-    id:    string
-    name:  string
-    email: string
-    bio:   string?
+    id:         string
+    name:       string
+    email:      string
+    avatar_url: string?
+    bio:        string?
+    post_count: int
+    joined_at:  string
 }

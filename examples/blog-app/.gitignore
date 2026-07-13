@@ -4,8 +4,10 @@ build/
 # Installed plugins
 frame_modules/
 
+# Cache
+.frame-cache/
+
 # IDE
 .vscode/
 .idea/
 *.DS_Store
-*.swp

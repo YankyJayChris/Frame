@@ -1,52 +1,93 @@
-// Frame project: blog-app
+// blog-app — Frame project root.
+// Defines app-level config, design tokens, and the entry screen.
 :vars {
-    primary:   "#007BFF"
-    secondary: "#6C757D"
+    primary:     "#bcf970"
+    on_primary:  "#1a1a2e"
+    surface:     "#FFFFFF"
+    background:  "#F5F5F5"
+    error:       "#dc2626"
+    text:        "#111827"
+    text_muted:  "#6b7280"
+    border:      "#e5e7eb"
 }
 
 :breakpoints {
-    sm: 360dp
-    md: 600dp
-    lg: 900dp
-    xl: 1200dp
+    sm:  360dp
+    md:  600dp
+    lg:  900dp
+    xl:  1200dp
 }
 
-// ── App-level lifecycle hooks ─────────────────────────────────────────────
-// Declared once here; wired into Application.onCreate / didFinishLaunching
+// App-level lifecycle — wired into Application.onCreate / AppDelegate.didFinishLaunching
 :app {
-    on_launch:     appInit
+    default_route: "/sign-in"
+    on_launch:     appLaunch
     on_foreground: appForeground
     on_background: appBackground
 }
 
-import { text, button, column, scaffold, app_bar } "frame-core"
-import { HomePage } "./views/pages/HomePage.fr"
+import { scaffold, column, text, button, icon, spacer } "frame-core"
+import { PostListPage } "./views/pages/PostListPage.fr"
+import { AuthStore } "./models/AuthStore.fr"
 
-// ── Splash page — demonstrates before_enter as expression + navigate options ──
+// Sign-in redirect page — before_enter handles the auth check
 page: {
-    name: "Splash"
-    route: "/"
-    // before_enter accepts any expression: function call, wait:, lambda
-    before_enter: checkAuth
-    // on_mount fires after fully visible (viewDidAppear / LaunchedEffect "mount")
-    on_mount: logAppOpen
-    styles: { width: 100%  height: 100%  background: $primary }
+    name: "Entry"
+    route: "/sign-in"
+    before_enter: redirectIfSignedIn
+    styles: {
+        width: 100%
+        height: 100%
+        background: $$on_primary
+        safe_area: true
+    }
     children: [
         scaffold: {
-            styles: { safe_area: true }
             children: [
-                app_bar: {
-                    title: "blog-app"
-                    leading: "line.3.horizontal"
-                }
                 column: {
-                    styles: { width: 100%  height: 100%  padding: 32  align: "center"  justify: "center" }
+                    styles: {
+                        width: 100%
+                        height: 100%
+                        align: "center"
+                        justify: "center"
+                        gap: 24dp
+                        padding: 40dp
+                    }
                     children: [
-                        text: { content: "blog-app"  styles: { color: "#FFFFFF"  font_size: 32sp  font_weight: "bold" } }
+                        icon: { name: "doc.fill"  size: 72  color: $$primary }
+                        text: {
+                            content: "blog-app"
+                            styles: { font_size: 32sp  font_weight: "bold"  color: "#FFFFFF" }
+                        }
+                        text: {
+                            content: "A modern blog built with Frame"
+                            styles: { font_size: 15sp  color: "#aaa"  align: "center" }
+                        }
                         spacer: { styles: { height: 16 } }
-                        text: { content: "Welcome to Frame"  styles: { color: "#FFFFFF"  font_size: 16sp } }
-                        // navigate with clear_stack: true — replaces entire back stack
-                        button: { content: "Get Started"  styles: { margin_top: 24 }  on_click: navigate("/home", clear_stack: true) }
+                        button: {
+                            content: "Sign In"
+                            styles: {
+                                width: 100%
+                                background: $$primary
+                                color: $$on_primary
+                                font_weight: "bold"
+                                border_radius: 10dp
+                                padding: 14dp
+                            }
+                            on_click: navigate("/sign-in/form")
+                        }
+                        button: {
+                            content: "Create Account"
+                            variant: "outlined"
+                            styles: {
+                                width: 100%
+                                border_color: $$primary
+                                color: $$primary
+                                border_radius: 10dp
+                                padding: 14dp
+                            }
+                            on_click: navigate("/register")
+                        }
                     ]
                 }
             ]
@@ -54,24 +95,21 @@ page: {
     ]
 }
 
-// ── App lifecycle functions ───────────────────────────────────────────────────
-fn appInit: () => {
-    log.info("App launched")
+fn appLaunch: async () => {
+    log.info("blog-app launched")
+    wait:AuthStore.init()
 }
 
 fn appForeground: () => {
-    log.info("App foregrounded")
+    log.debug("blog-app foregrounded")
 }
 
 fn appBackground: () => {
-    log.info("App backgrounded")
+    log.debug("blog-app backgrounded")
 }
 
-fn logAppOpen: () => {
-    log.info("Splash page visible")
-}
-
-fn checkAuth: async () => {
-    // Replace current entry so back won't return to splash
-    navigate("/home", replace: true)
+fn redirectIfSignedIn: async () => {
+    if AuthStore.is_signed_in == true {
+        navigate("/posts", replace: true)
+    }
 }

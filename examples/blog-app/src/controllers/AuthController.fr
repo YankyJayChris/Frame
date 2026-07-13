@@ -1,0 +1,30 @@
+// AuthController — coordinates auth actions from views.
+import { AuthStore } "../models/AuthStore.fr"
+import { isOnline } "frame-connectivity"
+
+fn handleSignIn: async (email: string, password: string) => {
+    // Guard: check connectivity before attempting auth
+    :var online = wait:isOnline("any")
+    if online != true {
+        AuthStore.error = "No internet connection. Please check your network."
+        return
+    }
+    wait:AuthStore.signIn(email, password)
+}
+
+fn handleRegister: async (name: string, email: string, password: string, confirm: string) => {
+    :var online = wait:isOnline("any")
+    if online != true {
+        AuthStore.error = "No internet connection."
+        return
+    }
+    if password != confirm {
+        AuthStore.error = "Passwords do not match"
+        return
+    }
+    wait:AuthStore.register(name, email, password)
+}
+
+fn handleSignOut: async () => {
+    wait:AuthStore.signOut()
+}

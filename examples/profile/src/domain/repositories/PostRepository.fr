@@ -1,0 +1,13 @@
+// PostRepository — abstract contract the domain layer depends on.
+// The data layer provides the concrete implementation.
+// This inversion keeps domain logic independent of API/DB details.
+:interface PostRepository {
+    fn getAll:      async () => list
+    fn getById:     async (id: string) => object?
+    fn getByAuthor: async (author_id: string) => list
+    fn create:      async (title: string, body: string, tags: list) => object
+    fn update:      async (id: string, title: string, body: string) => object
+    fn delete:      async (id: string) => bool
+    fn publish:     async (id: string) => object
+    fn search:      async (query: string) => list
+}

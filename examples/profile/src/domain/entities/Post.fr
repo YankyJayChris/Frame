@@ -1,0 +1,13 @@
+// Post — core domain entity.
+// Plain data object; no framework deps, no store logic here.
+:obj Post {
+    id:         string
+    title:      string
+    body:       string
+    author_id:  string
+    author:     string
+    tags:       list
+    published:  bool
+    created_at: string
+    updated_at: string
+}

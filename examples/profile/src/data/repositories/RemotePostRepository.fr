@@ -1,0 +1,108 @@
+// RemotePostRepository — concrete implementation of PostRepository.
+// Handles HTTP, error mapping, and response parsing.
+// The domain layer never imports this directly.
+import { Post } "../../domain/entities/Post.fr"
+import { AuthStore } "../../presentation/stores/AuthStore.fr"
+
+:var BASE_URL = "https://api.example.com/v1"
+
+fn getAll: async () => {
+    :var res = wait:fetch("$BASE_URL/posts", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.ok != true {
+        throw "Failed to load posts: $res.status"
+    }
+    return res.data.posts
+}
+
+fn getById: async (id: string) => {
+    :var res = wait:fetch("$BASE_URL/posts/$id", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.status == 404 {
+        return null
+    }
+    if res.ok != true {
+        throw "Failed to load post: $res.status"
+    }
+    return res.data
+}
+
+fn getByAuthor: async (author_id: string) => {
+    :var res = wait:fetch("$BASE_URL/posts?author_id=$author_id", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.ok != true {
+        throw "Failed to load posts: $res.status"
+    }
+    return res.data.posts
+}
+
+fn create: async (title: string, body: string, tags: list) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts", {
+        method: "POST"
+        headers: {
+            Authorization: "Bearer $token"
+            Content-Type:  "application/json"
+        }
+        body: { title: title  body: body  tags: tags }
+    })
+    if res.ok != true {
+        throw "Failed to create post: $res.status $res.data.message"
+    }
+    return res.data
+}
+
+fn update: async (id: string, title: string, body: string) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts/$id", {
+        method: "PATCH"
+        headers: {
+            Authorization: "Bearer $token"
+            Content-Type:  "application/json"
+        }
+        body: { title: title  body: body }
+    })
+    if res.ok != true {
+        throw "Failed to update post: $res.status"
+    }
+    return res.data
+}
+
+fn delete: async (id: string) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts/$id", {
+        method: "DELETE"
+        headers: { Authorization: "Bearer $token" }
+    })
+    return res.ok
+}
+
+fn publish: async (id: string) => {
+    :var token = AuthStore.token
+    :var res = wait:fetch("$BASE_URL/posts/$id/publish", {
+        method: "POST"
+        headers: { Authorization: "Bearer $token" }
+    })
+    if res.ok != true {
+        throw "Failed to publish post: $res.status"
+    }
+    return res.data
+}
+
+fn search: async (query: string) => {
+    :var encoded = query.url_encode()
+    :var res = wait:fetch("$BASE_URL/posts/search?q=$encoded", {
+        method: "GET"
+        headers: { Accept: "application/json" }
+    })
+    if res.ok != true {
+        throw "Search failed: $res.status"
+    }
+    return res.data.posts
+}

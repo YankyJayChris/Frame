@@ -1,0 +1,13 @@
+{
+  "iconDefinitions": {
+    "_fr": {
+      "iconPath": "./fr.svg"
+    }
+  },
+  "fileExtensions": {
+    "fr": "_fr"
+  },
+  "languageIds": {
+    "frame": "_fr"
+  }
+}

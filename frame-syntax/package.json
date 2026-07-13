@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "frame",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/frame-lang/frame"
+  },
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -35,6 +39,10 @@
     "onCommand:frame.openDocs",
     "onCommand:frame.restartLsp",
     "onCommand:frame.showIcons",
+    "onCommand:frame.openAppIconPicker",
+    "onCommand:frame.validateIcons",
+    "onCommand:frame.previewAppIcon",
+    "onCommand:frame.openAppIconDocs",
     "onView:frameExplorer"
   ],
   "scripts": {
@@ -52,8 +60,14 @@
     "typescript": "^5.9.3"
   },
   "contributes": {
-    "languages": [
+    "iconThemes": [
       {
+        "id": "frame-icons",
+        "label": "Frame File Icons",
+        "path": "./fileicons/frame-icon-theme.json"
+      }
+    ],
+    "languages": [      {
         "id": "frame",
         "aliases": [
           "Frame",
@@ -148,6 +162,22 @@
         "title": "Frame: Browse Icons"
       },
       {
+        "command": "frame.openAppIconPicker",
+        "title": "Frame: Configure App Icon"
+      },
+      {
+        "command": "frame.validateIcons",
+        "title": "Frame: Validate App Icon"
+      },
+      {
+        "command": "frame.previewAppIcon",
+        "title": "Frame: Preview App Icon"
+      },
+      {
+        "command": "frame.openAppIconDocs",
+        "title": "Frame: App Icon Documentation"
+      },
+      {
         "command": "frameExplorer.refresh",
         "title": "Frame: Refresh Explorer"
       }
@@ -221,6 +251,22 @@
         {
           "command": "frame.showIcons",
           "when": "editorLangId == frame"
+        },
+        {
+          "command": "frame.openAppIconPicker",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "frame.validateIcons",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "frame.previewAppIcon",
+          "when": "resourceFilename == frame.config.json"
+        },
+        {
+          "command": "frame.openAppIconDocs",
+          "when": "workspaceFolderCount > 0"
         }
       ],
       "editor/context": [
@@ -235,6 +281,16 @@
           "command": "frame.lintFile",
           "group": "Frame",
           "when": "resourceLangId == frame"
+        },
+        {
+          "command": "frame.openAppIconPicker",
+          "group": "Frame",
+          "when": "resourceFilename == frame.config.json"
+        },
+        {
+          "command": "frame.validateIcons",
+          "group": "Frame",
+          "when": "resourceFilename == frame.config.json"
         }
       ]
     },

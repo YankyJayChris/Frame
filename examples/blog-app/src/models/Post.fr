@@ -1,0 +1,13 @@
+// Post — blog post data model.
+:obj Post {
+    id:         string
+    title:      string
+    body:       string
+    author_id:  string
+    author:     string
+    tags:       list
+    published:  bool
+    like_count: int
+    created_at: string
+    updated_at: string
+}

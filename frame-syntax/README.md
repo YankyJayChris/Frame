@@ -25,7 +25,7 @@ The extension launches the built-in `frame lsp` server automatically when you op
 | **Document Highlights** | Highlight all occurrences of the symbol at the cursor |
 | **Document Colors** | Inline color picker for hex values (`#FF0000`, `#FF0`) and `$var` references |
 
-### Commands (18 total)
+### Commands (22 total)
 
 | Command | Description |
 |---------|-------------|
@@ -40,6 +40,10 @@ The extension launches the built-in `frame lsp` server automatically when you op
 | `frame.pluginList` | Quick pick of installed plugins |
 | `frame.iconList` | Browse all registered icons by category |
 | `frame.iconGenerate` | Generate icon assets for iOS, Android, or both |
+| `frame.openAppIconPicker` | Configure app icon (default or custom) |
+| `frame.validateIcons` | Validate app icon configuration |
+| `frame.previewAppIcon` | Preview and view app icon details |
+| `frame.openAppIconDocs` | Open app icon documentation |
 | `frame.newPage` | Insert a new page snippet |
 | `frame.newComponent` | Insert a new component snippet |
 | `frame.newStore` | Insert a new store snippet |

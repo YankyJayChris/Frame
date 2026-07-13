@@ -1,0 +1,93 @@
+// SignInPage — email/password sign-in with validation feedback.
+import { scaffold, column, row, text, button, input, icon, spacer, progress_bar } "frame-core"
+import { AuthStore } "../../models/AuthStore.fr"
+import { handleSignIn } "../../controllers/AuthController.fr"
+
+:var email:    string = ""
+:var password: string = ""
+
+page: {
+    name: "SignIn"
+    route: "/sign-in"
+    on_mount: checkAlreadySignedIn
+    styles: { width: 100%  height: 100%  safe_area: true }
+    children: [
+        scaffold: {
+            children: [
+                column: {
+                    styles: {
+                        width: 100%
+                        height: 100%
+                        padding: 32dp
+                        align: "center"
+                        justify: "center"
+                        gap: 16dp
+                        max_width: 400dp
+                    }
+                    children: [
+                        icon: { name: "doc.fill"  size: 56  color: "#bcf970" }
+                        text: {
+                            content: "Welcome back"
+                            styles: { font_size: 26sp  font_weight: "bold" }
+                        }
+                        text: {
+                            content: "Sign in to continue"
+                            styles: { font_size: 15sp  color: "#888"  margin_bottom: 8dp }
+                        }
+                        input: {
+                            value: email
+                            placeholder: "Email address"
+                            keyboard: "email"
+                            on_change: (v) => { email = v }
+                            styles: { width: 100% }
+                        }
+                        input: {
+                            value: password
+                            placeholder: "Password"
+                            secure: true
+                            on_change: (v) => { password = v }
+                            styles: { width: 100% }
+                        }
+                        // Error message
+                        text: {
+                            content: AuthStore.error
+                            styles: { color: "#dc2626"  font_size: 13sp  width: 100% }
+                            show_if: AuthStore.error != ""
+                        }
+                        // Sign-in button
+                        button: {
+                            content: "Sign In"
+                            styles: { width: 100%  margin_top: 8dp }
+                            on_click: handleSignIn(email, password)
+                            disabled: AuthStore.is_loading
+                        }
+                        progress_bar: {
+                            value: -1
+                            show_if: AuthStore.is_loading
+                        }
+                        // Register link
+                        row: {
+                            styles: { gap: 4dp  align: "center"  margin_top: 16dp }
+                            children: [
+                                text: { content: "Don't have an account?"  styles: { font_size: 14sp } }
+                                button: {
+                                    content: "Sign up"
+                                    variant: "text"
+                                    styles: { font_size: 14sp  color: "#bcf970"  font_weight: "bold" }
+                                    on_click: navigate("/register")
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
+
+fn checkAlreadySignedIn: async () => {
+    wait:AuthStore.init()
+    if AuthStore.is_signed_in == true {
+        navigate("/posts", replace: true)
+    }
+}

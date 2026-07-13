@@ -1,0 +1,102 @@
+// AuthStore — session state with persistent token storage.
+import { saveFile, loadFile } "frame-storage"
+
+:store AuthStore {
+    user:         object? = null
+    token:        string  = ""
+    is_loading:   bool    = false
+    error:        string  = ""
+    is_signed_in: bool    = false
+
+    fn init: async () => {
+        try {
+            :var data = wait:loadFile("auth.json", "documents", "utf8")
+            if data != "" {
+                :var session       = data.parse_json()
+                AuthStore.token        = session.token
+                AuthStore.user         = session.user
+                AuthStore.is_signed_in = true
+                log.info("Session restored for: $session.user.email")
+            }
+        } catch (err) {
+            log.debug("No persisted session: $err")
+        }
+    }
+
+    fn signIn: async (email: string, password: string) => {
+        if email == "" || password == "" {
+            AuthStore.error = "Email and password are required"
+            return
+        }
+        AuthStore.is_loading = true
+        AuthStore.error      = ""
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/auth/login", {
+                method: "POST"
+                headers: { Content-Type: "application/json" }
+                body: { email: email  password: password }
+            })
+            if res.status == 401 {
+                AuthStore.error = "Invalid email or password"
+                return
+            }
+            if res.ok != true {
+                AuthStore.error = res.data.message || "Sign in failed"
+                return
+            }
+            AuthStore.token        = res.data.token
+            AuthStore.user         = res.data.user
+            AuthStore.is_signed_in = true
+            wait:saveFile("auth.json", { token: res.data.token  user: res.data.user }.to_json(), "documents", "utf8")
+            navigate("/posts", clear_stack: true)
+        } catch (err) {
+            AuthStore.error = "Network error. Please check your connection."
+        }
+        AuthStore.is_loading = false
+    }
+
+    fn register: async (name: string, email: string, password: string) => {
+        if name == "" || email == "" || password == "" {
+            AuthStore.error = "All fields are required"
+            return
+        }
+        if password.length < 8 {
+            AuthStore.error = "Password must be at least 8 characters"
+            return
+        }
+        AuthStore.is_loading = true
+        AuthStore.error      = ""
+        try {
+            :var res = wait:fetch("https://api.example.com/v1/auth/register", {
+                method: "POST"
+                headers: { Content-Type: "application/json" }
+                body: { name: name  email: email  password: password }
+            })
+            if res.status == 409 {
+                AuthStore.error = "An account with this email already exists"
+                return
+            }
+            if res.ok != true {
+                AuthStore.error = res.data.message || "Registration failed"
+                return
+            }
+            AuthStore.token        = res.data.token
+            AuthStore.user         = res.data.user
+            AuthStore.is_signed_in = true
+            wait:saveFile("auth.json", { token: res.data.token  user: res.data.user }.to_json(), "documents", "utf8")
+            navigate("/posts", clear_stack: true)
+        } catch (err) {
+            AuthStore.error = "Network error. Please check your connection."
+        }
+        AuthStore.is_loading = false
+    }
+
+    fn signOut: async () => {
+        AuthStore.user         = null
+        AuthStore.token        = ""
+        AuthStore.is_signed_in = false
+        AuthStore.error        = ""
+        wait:saveFile("auth.json", "", "documents", "utf8")
+        navigate("/sign-in", clear_stack: true)
+    }
+}

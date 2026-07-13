@@ -1,0 +1,47 @@
+// PostStore — unit tests
+// Run with: frame test
+import { PostStore } "../../presentation/stores/PostStore.fr"
+
+describe: "PostStore" => {
+
+  it: "starts with empty post list" => {
+    expect: PostStore.posts.length .toBe: 0
+  }
+
+  it: "starts not loading" => {
+    expect: PostStore.is_loading .toBeFalse:()
+  }
+
+  it: "starts with no error" => {
+    expect: PostStore.error .toBe: ""
+  }
+
+  it: "starts on page 1" => {
+    expect: PostStore.page .toBe: 1
+  }
+
+  it: "like increments count optimistically" => {
+    PostStore.posts = [{ id: "1"  title: "T"  like_count: 3 }]
+    PostStore.like("1")
+    expect: PostStore.posts[0].like_count .toBe: 4
+  }
+
+  it: "setFilter updates filter field" => {
+    PostStore.filter = "all"
+    PostStore.filter = "published"
+    expect: PostStore.filter .toBe: "published"
+  }
+
+  it: "setSort updates sort field" => {
+    PostStore.sort = "newest"
+    PostStore.sort = "popular"
+    expect: PostStore.sort .toBe: "popular"
+  }
+
+  it: "clearError resets error string" => {
+    PostStore.error = "Something went wrong"
+    PostStore.clearError()
+    expect: PostStore.error .toBe: ""
+  }
+
+}

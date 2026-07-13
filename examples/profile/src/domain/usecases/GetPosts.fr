@@ -1,0 +1,33 @@
+// GetPosts use case — fetch and filter the post list.
+// Business rules: only return published posts unless author is requesting own posts.
+import { PostRepository } "../repositories/PostRepository.fr"
+import { AuthStore } "../../presentation/stores/AuthStore.fr"
+
+fn getPosts: async () => {
+    :var all = wait:PostRepository.getAll()
+    // Business rule: unauthenticated users only see published posts
+    if AuthStore.user == null {
+        return all.filter((p) => p.published == true)
+    }
+    // Authenticated users see their own drafts too
+    :var user_id = AuthStore.user.id
+    return all.filter((p) => p.published == true || p.author_id == user_id)
+}
+
+fn getPostsByAuthor: async (author_id: string) => {
+    if author_id == "" {
+        throw "author_id is required"
+    }
+    return wait:PostRepository.getByAuthor(author_id)
+}
+
+fn searchPosts: async (query: string) => {
+    if query == "" {
+        return wait:getPosts()
+    }
+    :var trimmed = query.trim()
+    if trimmed.length < 2 {
+        throw "Search query must be at least 2 characters"
+    }
+    return wait:PostRepository.search(trimmed)
+}

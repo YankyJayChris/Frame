@@ -44,10 +44,14 @@ const decorations_1 = require("./decorations");
 const import_manager_1 = require("./import-manager");
 const completion_provider_1 = require("./completion-provider");
 const icon_picker_1 = require("./icon-picker");
+const app_icon_manager_1 = require("./app-icon-manager");
 const side_panel_1 = require("./side-panel");
+const file_decorations_1 = require("./file-decorations");
 let client;
 function findFrameBinary() {
-    const configPath = vscode.workspace.getConfiguration('frame').get('path');
+    const configPath = vscode.workspace
+        .getConfiguration("frame")
+        .get("path");
     if (configPath) {
         try {
             fs.accessSync(configPath, fs.constants.X_OK);
@@ -55,8 +59,8 @@ function findFrameBinary() {
         }
         catch { }
     }
-    const envPath = process.env.PATH || '';
-    const pathDirs = envPath.split(':').filter(Boolean);
+    const envPath = process.env.PATH || "";
+    const pathDirs = envPath.split(":").filter(Boolean);
     for (const dir of pathDirs) {
         const candidate = `${dir}/frame`;
         try {
@@ -65,10 +69,10 @@ function findFrameBinary() {
         }
         catch { }
     }
-    const home = process.env.HOME || '';
+    const home = process.env.HOME || "";
     const commonLocations = [
-        '/usr/local/bin/frame',
-        '/opt/homebrew/bin/frame',
+        "/usr/local/bin/frame",
+        "/opt/homebrew/bin/frame",
         `${home}/.frame/bin/frame`,
         `${home}/.cargo/bin/frame`,
         `${home}/.local/bin/frame`,
@@ -83,38 +87,76 @@ function findFrameBinary() {
     return undefined;
 }
 async function activate(context) {
+    // Always register UI features — these work regardless of whether the Frame binary is installed
+    context.subscriptions.push(...(0, file_decorations_1.registerFileDecorations)(context), ...(0, completion_provider_1.registerCompletionProviders)(context), ...(0, icon_picker_1.registerIconPicker)(context), ...(0, app_icon_manager_1.registerAppIconManager)(context), ...(0, side_panel_1.registerSidePanel)(context), ...(0, decorations_1.registerDecorations)(context));
+    // Apply Material Icon Theme associations for .fr files if that theme is active
+    applyMaterialIconAssociations();
     const binary = findFrameBinary();
     if (!binary) {
-        const action = await vscode.window.showErrorMessage('Frame binary not found. Please install Frame or set "frame.path" in settings.', 'Install Frame', 'Open Settings');
-        if (action === 'Install Frame') {
-            vscode.env.openExternal(vscode.Uri.parse('https://frame-lang.org/install'));
+        const action = await vscode.window.showWarningMessage('Frame binary not found. Syntax features active; install Frame CLI for build/LSP support.', "Install Frame", "Open Settings");
+        if (action === "Install Frame") {
+            vscode.env.openExternal(vscode.Uri.parse("https://frame-lang.org/install"));
         }
-        else if (action === 'Open Settings') {
-            vscode.commands.executeCommand('workbench.action.openSettings', 'frame.path');
+        else if (action === "Open Settings") {
+            vscode.commands.executeCommand("workbench.action.openSettings", "frame.path");
         }
+        // LSP-powered commands unavailable without binary — UI features above still work
         return;
     }
     const serverOptions = {
         command: binary,
-        args: ['lsp'],
-        options: { env: { ...process.env, RUST_LOG: 'error' } },
+        args: ["lsp"],
+        options: { env: { ...process.env, RUST_LOG: "error" } },
     };
     const clientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'frame' }],
+        documentSelector: [{ scheme: "file", language: "frame" }],
         synchronize: {
-            fileEvents: vscode.workspace.createFileSystemWatcher('**/*.fr'),
+            fileEvents: vscode.workspace.createFileSystemWatcher("**/*.fr"),
         },
-        outputChannel: vscode.window.createOutputChannel('Frame Language Server'),
-        traceOutputChannel: vscode.window.createOutputChannel('Frame LSP Trace'),
+        outputChannel: vscode.window.createOutputChannel("Frame Language Server"),
+        traceOutputChannel: vscode.window.createOutputChannel("Frame LSP Trace"),
         progressOnInitialization: true,
         initializationOptions: {
-            workspaceRoot: vscode.workspace.getConfiguration('frame').get('workspaceRoot') ||
-                (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath),
+            workspaceRoot: vscode.workspace
+                .getConfiguration("frame")
+                .get("workspaceRoot") ||
+                vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
         },
     };
-    client = new node_1.LanguageClient('frame-lsp', 'Frame Language Server', serverOptions, clientOptions);
+    client = new node_1.LanguageClient("frame-lsp", "Frame Language Server", serverOptions, clientOptions);
     client.start();
-    context.subscriptions.push(...(0, commands_1.registerCommands)(context, client), ...(0, status_bar_1.registerStatusBar)(context, client), ...(0, decorations_1.registerDecorations)(context), ...(0, import_manager_1.registerImportManager)(context, client), ...(0, completion_provider_1.registerCompletionProviders)(context), ...(0, icon_picker_1.registerIconPicker)(context), ...(0, side_panel_1.registerSidePanel)(context));
+    context.subscriptions.push(...(0, commands_1.registerCommands)(context, client), ...(0, status_bar_1.registerStatusBar)(context, client), ...(0, import_manager_1.registerImportManager)(context, client));
+}
+/**
+ * If Material Icon Theme is active, add .fr file associations so it shows
+ * appropriate icons (using its "document" icon family as a fallback,
+ * or custom associations the user can override).
+ */
+function applyMaterialIconAssociations() {
+    const iconTheme = vscode.workspace
+        .getConfiguration("workbench")
+        .get("iconTheme");
+    if (iconTheme !== "material-icon-theme")
+        return;
+    const config = vscode.workspace.getConfiguration("material-icon-theme");
+    const existing = config.get("files.associations") ?? {};
+    const frAssociations = {
+        "*.fr": "document",
+        "*.test.fr": "test",
+        "project.fr": "settings",
+    };
+    // Only write if something is actually new (avoid triggering unnecessary reloads)
+    const merged = { ...existing };
+    let changed = false;
+    for (const [pattern, icon] of Object.entries(frAssociations)) {
+        if (!merged[pattern]) {
+            merged[pattern] = icon;
+            changed = true;
+        }
+    }
+    if (changed) {
+        config.update("files.associations", merged, vscode.ConfigurationTarget.Global);
+    }
 }
 function deactivate() {
     if (!client)
