@@ -697,6 +697,10 @@ fn parse_page_decl(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &str) -
             Rule::component_node => {
                 page.children.push(parse_component_node(child, errors, file));
             }
+            Rule::fn_def => {
+                let f = parse_fn_def(child, errors, file);
+                page.functions.insert(f.name.clone(), f);
+            }
             _ => {}
         }
     }
@@ -745,6 +749,10 @@ fn parse_component_decl(pair: Pair<Rule>, errors: &mut Vec<FrameError>, file: &s
                 def.animate.push(parse_animate_block(child));
             }
             Rule::show_if_prop => {} // handled on nodes
+            Rule::fn_def => {
+                let f = parse_fn_def(child, errors, file);
+                def.functions.insert(f.name.clone(), f);
+            }
             Rule::component_node => {
                 def.children.push(parse_component_node(child, errors, file));
             }
@@ -1752,7 +1760,7 @@ fn parse_wait_fetch_expr(pair: Pair<Rule>) -> FetchExpr {
                             }
                         }
                         Rule::fetch_body => {
-                            let entries: HashMap<String, Expr> = opt.into_inner()
+                            let entries: Vec<(String, Expr)> = opt.into_inner()
                                 .filter(|p| p.as_rule() == Rule::body_entry)
                                 .map(|e| {
                                     let mut ei = e.into_inner();
@@ -1761,13 +1769,26 @@ fn parse_wait_fetch_expr(pair: Pair<Rule>) -> FetchExpr {
                                     (k, v)
                                 }).collect();
                             if !entries.is_empty() {
-                                fe.body = Some(Expr::Literal(Value::Object(
-                                    entries.into_iter().map(|(k,v)| {
-                                        let s = match &v { Expr::Literal(Value::Str(s)) => s.clone(), _ => String::new() };
-                                        (k, Value::Str(s))
-                                    }).collect()
-                                )));
+                                // Preserve the actual expression types, not just strings
+                                let map: HashMap<String, Value> = entries.iter().map(|(k, v)| {
+                                    let val = match v {
+                                        Expr::Literal(lit) => lit.clone(),
+                                        _ => Value::Str(String::new()), // non-literal; handled at codegen
+                                    };
+                                    (k.clone(), val)
+                                }).collect();
+                                fe.body = Some(Expr::Literal(Value::Object(map)));
                             }
+                        }
+                        // content_type: "..." — shorthand that inserts Content-Type header
+                        Rule::fetch_content_type => {
+                            let ct = opt.into_inner().next()
+                                .map(|p| strip_quotes(p.as_str()))
+                                .unwrap_or_else(|| "application/json".to_string());
+                            fe.headers.insert(
+                                "Content-Type".to_string(),
+                                Expr::Literal(Value::Str(ct)),
+                            );
                         }
                         _ => {}
                     }

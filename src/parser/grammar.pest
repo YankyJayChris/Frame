@@ -486,15 +486,19 @@ fetch_option = _{
     fetch_method
   | fetch_headers
   | fetch_body
+  | fetch_content_type
   | fetch_timeout
 }
 
-fetch_method  = { "method" ~ ":" ~ (string | ident) }
-fetch_headers = { "headers" ~ ":" ~ "{" ~ header_entry* ~ "}" }
-header_entry  = { ident ~ ":" ~ expr ~ ","? }
-fetch_body    = { "body" ~ ":" ~ "{" ~ body_entry* ~ "}" }
-body_entry    = { ident ~ ":" ~ expr }
-fetch_timeout = { "timeout" ~ ":" ~ integer }
+fetch_method        = { "method"       ~ ":" ~ (string | ident) }
+fetch_headers       = { "headers"      ~ ":" ~ "{" ~ header_entry* ~ "}" }
+header_entry        = { ident ~ ":" ~ expr ~ ","? }
+fetch_body          = { "body"         ~ ":" ~ "{" ~ body_entry* ~ "}" }
+body_entry          = { ident ~ ":" ~ expr }
+/// content_type: "application/json" | "multipart/form-data" | "application/x-www-form-urlencoded"
+/// Shorthand that sets the Content-Type header without a full headers: block.
+fetch_content_type  = { "content_type" ~ ":" ~ string }
+fetch_timeout       = { "timeout"      ~ ":" ~ integer }
 
 /// .then((data) => { ... }).catch((err) => { ... })
 then_chain = {
@@ -563,6 +567,7 @@ component_def_prop = _{
   | event_prop
   | animate_block
   | show_if_prop
+  | fn_def
   | component_node
 }
 

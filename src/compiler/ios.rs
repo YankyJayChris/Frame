@@ -2398,16 +2398,62 @@ fn emit_swift_fetch(fe: &FetchExpr, indent: usize) -> String {
     let method = fe.method.to_uppercase();
     let then_code: String = fe.then_branch.iter().map(|s| emit_swift_stmt(s, indent + 2)).collect();
     let catch_code: String = fe.catch_branch.iter().map(|s| emit_swift_stmt(s, indent + 2)).collect();
-    // plan §1h — inject headers
+
+    // Determine Content-Type from user-declared headers (user wins; never hardcode)
+    let content_type = fe.headers.iter()
+        .find(|(k, _)| k.to_lowercase() == "content-type")
+        .map(|(_, v)| match v {
+            Expr::Literal(Value::Str(s)) => s.clone(),
+            _ => "application/json".to_string(),
+        });
+
+    // Emit non-Content-Type headers first; body logic sets Content-Type
     let headers_code: String = fe.headers.iter()
+        .filter(|(k, _)| k.to_lowercase() != "content-type")
         .map(|(k, v)| format!("{pad}        request.setValue({}, forHTTPHeaderField: \"{}\")\n",
             emit_swift_expr(v), k))
         .collect();
+
+    // Build body based on Content-Type (or default to JSON when body present)
+    let body_code = if let Some(body_expr) = &fe.body {
+        let body_val = emit_swift_expr(body_expr);
+        let ct = content_type.as_deref().unwrap_or("application/json");
+        if ct.contains("x-www-form-urlencoded") {
+            format!(
+                "{pad}        // Form-encoded body\n\
+                 {pad}        if let bodyDict = {body_val} as? [String: Any] {{\n\
+                 {pad}            let pairs = bodyDict.map {{ \"\\($0.key)=\\($0.value)\" }}.joined(separator: \"&\")\n\
+                 {pad}            request.httpBody = pairs.data(using: .utf8)\n\
+                 {pad}        }}\n\
+                 {pad}        request.setValue(\"application/x-www-form-urlencoded\", forHTTPHeaderField: \"Content-Type\")\n"
+            )
+        } else if ct.contains("multipart") {
+            format!(
+                "{pad}        // Multipart body — use URLSession uploadTask for production multipart\n\
+                 {pad}        request.setValue(\"{ct}\", forHTTPHeaderField: \"Content-Type\")\n"
+            )
+        } else {
+            // Default: JSON
+            format!(
+                "{pad}        if let bodyData = try? JSONSerialization.data(withJSONObject: {body_val}) {{\n\
+                 {pad}            request.httpBody = bodyData\n\
+                 {pad}        }}\n\
+                 {pad}        request.setValue(\"application/json\", forHTTPHeaderField: \"Content-Type\")\n"
+            )
+        }
+    } else if let Some(ct) = &content_type {
+        // Content-Type declared but no body — set the header anyway
+        format!("{pad}        request.setValue(\"{ct}\", forHTTPHeaderField: \"Content-Type\")\n")
+    } else {
+        String::new()
+    };
+
     format!("{pad}Task {{\n\
              {pad}    do {{\n\
              {pad}        var request = URLRequest(url: URL(string: {url})!)\n\
              {pad}        request.httpMethod = \"{method}\"\n\
              {headers_code}\
+             {body_code}\
              {pad}        let (data, _) = try await URLSession.shared.data(for: request)\n\
              {then_code}\
              {pad}        await MainActor.run {{ /* update state */ }}\n\

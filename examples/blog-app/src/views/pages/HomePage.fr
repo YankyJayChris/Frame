@@ -155,6 +155,21 @@ page: {
             on_click: handleAdd()
         }
     ]
+
+    fn openSearch: () => {
+        log.info("Home: opening search")
+        navigate("/search")
+    }
+
+    fn openSettings: () => {
+        log.info("Home: opening settings")
+        navigate_modal("/settings")
+    }
+
+    fn handleAdd: () => {
+        log.info("Home: add button pressed")
+        navigate("/profile/new")
+    }
 }
 
 page: {
@@ -204,6 +219,15 @@ page: {
             ]
         }
     ]
+
+    fn handleReportUser: () => {
+        log.info("Profile: reporting user \(params.userId)")
+        showToast("Report submitted for user \(params.userId)")
+    }
+
+    fn handleShareProfile: () => {
+        log.info("Profile: sharing user \(params.userId)")
+    }
 }
 
 fn checkNetworkAccess: async () => {

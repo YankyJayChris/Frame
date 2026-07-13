@@ -1259,20 +1259,26 @@ fn compute_document_symbols(ast: &AST) -> Vec<DocumentSymbol> {
     };
 
     for page in &ast.pages {
-        let children: Vec<DocumentSymbol> = page
+        let mut children: Vec<DocumentSymbol> = page
             .state
             .iter()
             .map(|(name, ftype)| child_doc(name.clone(), SymbolKind::FIELD, Some(format!("state: {:?}", ftype))))
             .collect();
+        for (fn_name, _) in &page.functions {
+            children.push(child_doc(fn_name.clone(), SymbolKind::FUNCTION, Some("page function".into())));
+        }
         symbols.push(parent_doc(page.name.clone(), Some(format!("route: {}", page.route)), SymbolKind::PACKAGE, children));
     }
 
     for (name, comp) in &ast.components {
-        let children: Vec<DocumentSymbol> = comp
+        let mut children: Vec<DocumentSymbol> = comp
             .props
             .keys()
             .map(|pn| child_doc(pn.clone(), SymbolKind::PROPERTY, None))
             .collect();
+        for (fn_name, _) in &comp.functions {
+            children.push(child_doc(fn_name.clone(), SymbolKind::FUNCTION, Some("component function".into())));
+        }
         symbols.push(parent_doc(name.clone(), None, SymbolKind::CLASS, children));
     }
 

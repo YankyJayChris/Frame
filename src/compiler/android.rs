@@ -2688,31 +2688,84 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
     let i3 = "    ".repeat(indent + 3);
 
     let url = emit_expr(&fe.url);
-    let method = fe.method.to_lowercase();
+    let method = fe.method.to_uppercase();
 
+    // Determine Content-Type from headers (user-declared wins; default to json when body present)
+    let content_type = fe.headers.iter()
+        .find(|(k, _)| k.to_lowercase() == "content-type")
+        .map(|(_, v)| match v {
+            Expr::Literal(Value::Str(s)) => s.clone(),
+            _ => "application/json".to_string(),
+        });
+
+    // Emit headers — skip Content-Type here, we'll set it via the MediaType
     let headers_code: String = fe.headers.iter()
+        .filter(|(k, _)| k.to_lowercase() != "content-type")
         .map(|(k, v)| format!("{i3}.addHeader(\"{}\", {})\n", k, emit_expr(v)))
         .collect();
 
-    let then_code: String = fe
-        .then_branch
-        .iter()
-        .map(|s| emit_stmt(s, indent + 3))
-        .collect();
-    let catch_code: String = fe
-        .catch_branch
-        .iter()
-        .map(|s| emit_stmt(s, indent + 3))
-        .collect();
+    // Build request body based on Content-Type
+    let body_code = if let Some(body_expr) = &fe.body {
+        let body_val = emit_expr(body_expr);
+        let ct = content_type.as_deref().unwrap_or("application/json");
+        if ct.contains("x-www-form-urlencoded") {
+            // Form-encoded: build FormBody
+            format!(
+                "{i2}// Form-encoded body\n\
+                 {i2}val formBody = okhttp3.FormBody.Builder()\n\
+                 {i2}    .apply {{ for ((k, v) in {body_val} as? Map<*, *> ?: emptyMap<String,String>()) {{ add(k.toString(), v.toString()) }} }}\n\
+                 {i2}    .build()\n"
+            )
+        } else if ct.contains("multipart") {
+            // Multipart: build MultipartBody
+            format!(
+                "{i2}// Multipart body\n\
+                 {i2}val multipartBody = okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)\n\
+                 {i2}    .apply {{ for ((k, v) in {body_val} as? Map<*, *> ?: emptyMap<String,String>()) {{ addFormDataPart(k.toString(), v.toString()) }} }}\n\
+                 {i2}    .build()\n"
+            )
+        } else {
+            // Default: JSON body
+            format!(
+                "{i2}val bodyJson = com.google.gson.Gson().toJson({body_val})\n\
+                 {i2}val requestBody = bodyJson.toRequestBody(\"application/json; charset=utf-8\".toMediaType())\n"
+            )
+        }
+    } else {
+        String::new()
+    };
+
+    // Determine the body variable name and method call
+    let (body_var, method_call) = if !body_code.is_empty() {
+        let ct = content_type.as_deref().unwrap_or("application/json");
+        let var = if ct.contains("x-www-form-urlencoded") {
+            "formBody"
+        } else if ct.contains("multipart") {
+            "multipartBody"
+        } else {
+            "requestBody"
+        };
+        (var, format!(".method(\"{method}\", {var})"))
+    } else {
+        ("", match method.as_str() {
+            "GET"    => ".get()".to_string(),
+            "DELETE" => ".delete()".to_string(),
+            _        => format!(".method(\"{method}\", null)"),
+        })
+    };
+    let _ = body_var; // suppress unused warning
+
+    let then_code: String = fe.then_branch.iter().map(|s| emit_stmt(s, indent + 3)).collect();
+    let catch_code: String = fe.catch_branch.iter().map(|s| emit_stmt(s, indent + 3)).collect();
 
     format!(
         r#"{pad}LaunchedEffect(Unit) {{
 {i1}withContext(Dispatchers.IO) {{
 {i2}val client = OkHttpClient()
-{i2}val request = Request.Builder()
+{body_code}{i2}val request = Request.Builder()
 {i3}.url({url})
-{i3}.{method}()
-{headers_code}{i3}.build()
+{headers_code}{i3}{method_call}
+{i3}.build()
 {i2}try {{
 {i3}val response = client.newCall(request).execute()
 {i3}val body = response.body?.string()

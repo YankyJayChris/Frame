@@ -407,6 +407,13 @@ fn print_page(page: &Page) -> String {
         }
         out.push_str("    ]\n");
     }
+    // inner functions
+    let mut funcs: Vec<_> = page.functions.iter().collect();
+    funcs.sort_by_key(|(k, _)| k.as_str());
+    for (_, func) in &funcs {
+        out.push_str(&print_function(func, 1));
+        out.push('\n');
+    }
     out.push('}');
     out
 }

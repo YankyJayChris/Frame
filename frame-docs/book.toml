@@ -1,0 +1,23 @@
+[book]
+title = "Frame Documentation"
+authors = ["Frame Team"]
+language = "en"
+description = "Documentation for the Frame cross-platform mobile framework"
+
+[output.html]
+site-url = "/"
+edit-url-template = "https://github.com/frame-lang/frame/edit/main/frame-docs/{path}"
+git-repository-url = "https://github.com/frame-lang/frame"
+default-theme = "light"
+preferred-dark-theme = "ayu"
+additional-css = ["theme/custom.css"]
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+copyable = true
+
+[rust]
+edition = "2021"

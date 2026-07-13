@@ -526,6 +526,7 @@ pub struct Page {
     pub styles: Styles,
     pub state: HashMap<String, StateField>,
     pub children: Vec<ComponentNode>,
+    pub functions: HashMap<String, Function>,
 }
 
 // ─── Import / Const ───────────────────────────────────────────────────────────

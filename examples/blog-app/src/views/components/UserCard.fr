@@ -31,4 +31,18 @@ component UserCard: {
             ]
         }
     ]
+    events: {
+        on_click: handleCardTap()
+        on_long_press: handleCardLongPress()
+    }
+
+    fn handleCardTap: () => {
+        log.info("UserCard tapped: \(name)")
+        navigate("/profile/1")
+    }
+
+    fn handleCardLongPress: () => {
+        log.info("UserCard long-pressed: \(name)")
+        showToast("Contact: \(email)")
+    }
 }
