@@ -61,6 +61,15 @@ pub fn gen_ios_with_plugins(
     let app_name = &config.app_name;
     let safe_name = app_name.replace(' ', "");
 
+    // ── Architecture detection ──────────────────────────────────────────────────
+    // Mirrors the Android arch detection — same three buckets.
+    let arch = detect_ios_arch(ast);
+    // iOS subdirectory prefixes for each file category
+    let screens_dir  = ios_screens_dir(arch);   // e.g. "Screens/" or "Presentation/Screens/"
+    let comp_dir     = ios_comp_dir(arch);       // e.g. "Components/" or "Presentation/Components/"
+    let stores_dir   = ios_stores_dir(arch);     // e.g. "Stores/" or "Data/Stores/"
+    let models_dir   = ios_models_dir(arch);     // e.g. "Models/" or "Domain/Models/"
+
     // Detect features
     let uses_fetch        = ios_uses_fetch(ast);
     let uses_camera       = ios_uses_call(ast, "camera:capture");
@@ -92,13 +101,13 @@ pub fn gen_ios_with_plugins(
         swift_sources.push("FrameAppLifecycle.swift".to_string());
     }
     for page in &ast.pages {
-        swift_sources.push(format!("{}ViewController.swift", page.name));
+        swift_sources.push(format!("{}{}ViewController.swift", screens_dir, page.name));
     }
     for name in ast.components.keys() {
-        swift_sources.push(format!("{}View.swift", name));
+        swift_sources.push(format!("{}{}View.swift", comp_dir, name));
     }
     for name in ast.stores.keys() {
-        swift_sources.push(format!("{}Store.swift", name));
+        swift_sources.push(format!("{}{}Store.swift", stores_dir, name));
     }
     if uses_camera       { swift_sources.push("CameraHelper.swift".to_string()); }
     if uses_location     { swift_sources.push("LocationHelper.swift".to_string()); }
@@ -135,38 +144,41 @@ pub fn gen_ios_with_plugins(
     // Entry point: main screen controller wiring
     files.push(gen_main_view_controller(ast, bundle_id));
 
-    // Per-page ViewControllers
+    // Per-page ViewControllers — placed in arch-aware subdirectory
     for page in &ast.pages {
-        files.push(gen_page_view_controller(page, ast, bundle_id));
+        files.push(gen_page_view_controller_at(page, ast, bundle_id, screens_dir));
     }
 
     // Custom components → UIView subclasses
     for (name, comp) in &ast.components {
-        files.push(gen_component_view(name, comp, bundle_id));
+        files.push(gen_component_view_at(name, comp, bundle_id, comp_dir));
     }
 
     // Store ObservableObjects
     for (name, store) in &ast.stores {
-        files.push(gen_store_swift(name, store, bundle_id));
+        files.push(gen_store_swift_at(name, store, bundle_id, stores_dir));
     }
 
     // :obj declarations → Swift Codable structs
     for obj in ast.objects.values() {
-        let f = gen_obj_swift(obj);
+        let mut f = gen_obj_swift(obj);
+        f.path = format!("{}{}", models_dir, f.path);
         swift_sources.push(f.path.clone());
         files.push(f);
     }
 
     // :enum declarations → Swift enums (plan §1b)
     for enum_def in ast.enums.values() {
-        let f = gen_enum_swift(enum_def);
+        let mut f = gen_enum_swift(enum_def);
+        f.path = format!("{}{}", models_dir, f.path);
         swift_sources.push(f.path.clone());
         files.push(f);
     }
 
     // :type aliases → Swift typealiases (plan §1c)
     for type_alias in ast.type_aliases.values() {
-        let f = gen_type_alias_swift(type_alias);
+        let mut f = gen_type_alias_swift(type_alias);
+        f.path = format!("{}{}", models_dir, f.path);
         swift_sources.push(f.path.clone());
         files.push(f);
     }
@@ -186,6 +198,82 @@ pub fn gen_ios_with_plugins(
     if uses_notification  { files.push(gen_notification_helper_swift(bundle_id)); }
 
     files
+}
+
+// ─── iOS Architecture helpers ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum IosArch { Mvc, Clean, Flat }
+
+fn detect_ios_arch(ast: &AST) -> IosArch {
+    for imp in &ast.imports {
+        if imp.path.contains("presentation/") || imp.path.contains("domain/") {
+            return IosArch::Clean;
+        }
+        if imp.path.contains("views/") || imp.path.contains("controllers/") {
+            return IosArch::Mvc;
+        }
+    }
+    IosArch::Flat
+}
+
+fn ios_screens_dir(arch: IosArch) -> &'static str {
+    match arch {
+        IosArch::Mvc   => "Screens/",
+        IosArch::Clean => "Presentation/Screens/",
+        IosArch::Flat  => "",
+    }
+}
+
+fn ios_comp_dir(arch: IosArch) -> &'static str {
+    match arch {
+        IosArch::Mvc   => "Components/",
+        IosArch::Clean => "Presentation/Components/",
+        IosArch::Flat  => "",
+    }
+}
+
+fn ios_stores_dir(arch: IosArch) -> &'static str {
+    match arch {
+        IosArch::Mvc   => "Stores/",
+        IosArch::Clean => "Data/Stores/",
+        IosArch::Flat  => "",
+    }
+}
+
+fn ios_models_dir(arch: IosArch) -> &'static str {
+    match arch {
+        IosArch::Mvc   => "Models/",
+        IosArch::Clean => "Domain/Models/",
+        IosArch::Flat  => "",
+    }
+}
+
+/// Wrapper: generate a ViewController placed in `subdir`.
+fn gen_page_view_controller_at(page: &Page, ast: &AST, bundle_id: &str, subdir: &str) -> OutputFile {
+    let mut f = gen_page_view_controller(page, ast, bundle_id);
+    if !subdir.is_empty() {
+        f.path = format!("{}{}", subdir, f.path);
+    }
+    f
+}
+
+/// Wrapper: generate a component UIView subclass placed in `subdir`.
+fn gen_component_view_at(name: &str, comp: &ComponentDef, bundle_id: &str, subdir: &str) -> OutputFile {
+    let mut f = gen_component_view(name, comp, bundle_id);
+    if !subdir.is_empty() {
+        f.path = format!("{}{}", subdir, f.path);
+    }
+    f
+}
+
+/// Wrapper: generate an ObservableObject store placed in `subdir`.
+fn gen_store_swift_at(name: &str, store: &StoreSlice, bundle_id: &str, subdir: &str) -> OutputFile {
+    let mut f = gen_store_swift(name, store, bundle_id);
+    if !subdir.is_empty() {
+        f.path = format!("{}{}", subdir, f.path);
+    }
+    f
 }
 
 // ─── Xcode project file (project.pbxproj) ────────────────────────────────────
@@ -1535,12 +1623,12 @@ fn emit_uikit_action(node: &ComponentNode, _parent: &str, pad: &str, indent: usi
     };
     let i_pad = "    ".repeat(indent);
     if !icon.is_empty() && icon != "\"\"" {
-        format!("\n{i_pad}UIBarButtonItem(image: UIImage(systemName: {icon}), style: .plain, target: self, action: {action_sel})")
+        format!("\n{i_pad}UIBarButtonItem(image: UIImage(systemName: {icon}), style: .plain, target: self, action: {action_sel}),")
     } else {
         let text = node.props.get("content")
             .map(|e| emit_swift_expr(e))
             .unwrap_or_else(|| "\"\"".to_string());
-        format!("\n{i_pad}UIBarButtonItem(title: {text}, style: .plain, target: self, action: {action_sel})")
+        format!("\n{i_pad}UIBarButtonItem(title: {text}, style: .plain, target: self, action: {action_sel}),")
     }
 }
 
@@ -2185,7 +2273,10 @@ pub fn emit_swift_expr(expr: &Expr) -> String {
             for (k, v) in &c.named_args {
                 parts.push(format!("{}: {}", k, emit_swift_expr(v)));
             }
-            if c.func.contains('.') {
+            if c.func.starts_with("wait:") {
+                let inner_func = c.func.strip_prefix("wait:").unwrap_or(&c.func);
+                format!("Task {{ await {}({}) }}", inner_func, parts.join(", "))
+            } else if c.func.contains('.') {
                 if let Some(translated) = crate::stdlib::translate_stdlib_call(&c.func, &parts, "ios") {
                     translated
                 } else {

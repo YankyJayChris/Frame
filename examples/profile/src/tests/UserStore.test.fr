@@ -4,7 +4,7 @@
 describe: "UserStore" => {
 
   it: "is_loading starts false" => {
-    expect: false .toBeFalse:
+    expect: false .toBeFalse:()
   }
 
   it: "error starts empty" => {

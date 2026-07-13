@@ -38,6 +38,70 @@ pub struct OutputFile {
     pub content: String,
 }
 
+// ─── Architecture detection ───────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProjectArch { Mvc, Clean, Flat }
+
+/// Detect the project architecture by inspecting import paths in the AST.
+fn detect_arch(ast: &AST) -> ProjectArch {
+    for imp in &ast.imports {
+        if imp.path.contains("presentation/") || imp.path.contains("domain/") {
+            return ProjectArch::Clean;
+        }
+        if imp.path.contains("views/") || imp.path.contains("controllers/") {
+            return ProjectArch::Mvc;
+        }
+    }
+    ProjectArch::Flat
+}
+
+/// Return the Kotlin subpackage + path suffix for pages/screens.
+fn screens_sub(arch: ProjectArch) -> (&'static str, &'static str) {
+    match arch {
+        ProjectArch::Mvc   => ("ui.screens", "ui/screens"),
+        ProjectArch::Clean => ("presentation.screens", "presentation/screens"),
+        ProjectArch::Flat  => ("", ""),
+    }
+}
+
+/// Return the Kotlin subpackage + path suffix for components.
+fn components_sub(arch: ProjectArch) -> (&'static str, &'static str) {
+    match arch {
+        ProjectArch::Mvc   => ("ui.components", "ui/components"),
+        ProjectArch::Clean => ("presentation.components", "presentation/components"),
+        ProjectArch::Flat  => ("", ""),
+    }
+}
+
+/// Return the Kotlin subpackage + path suffix for stores / ViewModels.
+fn stores_sub(arch: ProjectArch) -> (&'static str, &'static str) {
+    match arch {
+        ProjectArch::Mvc   => ("data.stores", "data/stores"),
+        ProjectArch::Clean => ("data.stores", "data/stores"),
+        ProjectArch::Flat  => ("", ""),
+    }
+}
+
+/// Return the Kotlin subpackage + path suffix for :obj / :enum / :type.
+fn models_sub(arch: ProjectArch) -> (&'static str, &'static str) {
+    match arch {
+        ProjectArch::Mvc   => ("data.models", "data/models"),
+        ProjectArch::Clean => ("domain.models", "domain/models"),
+        ProjectArch::Flat  => ("", ""),
+    }
+}
+
+/// Build the full package string: `{base_pkg}` or `{base_pkg}.{sub}`.
+fn full_pkg(base: &str, sub: &str) -> String {
+    if sub.is_empty() { base.to_string() } else { format!("{base}.{sub}") }
+}
+
+/// Build the full path dir: `{base_path}` or `{base_path}/{sub_path}`.
+fn full_path(base: &str, sub: &str) -> String {
+    if sub.is_empty() { base.to_string() } else { format!("{base}/{sub}") }
+}
+
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 /// Generate all Android project files from an AST + config.
@@ -56,6 +120,13 @@ pub fn gen_android_with_plugins(
     let mut files: Vec<OutputFile> = Vec::new();
     let pkg = &config.application_id;
     let pkg_path = pkg.replace('.', "/");
+
+    // ── Architecture detection ──────────────────────────────────────────────────
+    let arch = detect_arch(ast);
+    let (screens_pkg_sub, screens_path_sub) = screens_sub(arch);
+    let (comp_pkg_sub,    comp_path_sub)    = components_sub(arch);
+    let (stores_pkg_sub,  stores_path_sub)  = stores_sub(arch);
+    let (models_pkg_sub,  models_path_sub)  = models_sub(arch);
 
     // ── Feature detection ──────────────────────────────────────────────────────
     // Network
@@ -115,30 +186,42 @@ pub fn gen_android_with_plugins(
     files.push(gen_main_activity(ast, pkg));
 
     for page in &ast.pages {
-        files.push(gen_page_screen(page, ast, pkg, &pkg_path));
+        let p_pkg  = full_path(&pkg_path, screens_path_sub);
+        let p_decl = full_pkg(pkg, screens_pkg_sub);
+        files.push(gen_page_screen(page, ast, &p_decl, &p_pkg));
     }
 
     for (name, comp) in &ast.components {
-        files.push(gen_component_file(name, comp, pkg, &pkg_path));
+        let c_pkg  = full_path(&pkg_path, comp_path_sub);
+        let c_decl = full_pkg(pkg, comp_pkg_sub);
+        files.push(gen_component_file(name, comp, &c_decl, &c_pkg));
     }
 
     for (name, store) in &ast.stores {
-        files.push(gen_store_viewmodel(name, store, pkg, &pkg_path));
+        let s_pkg  = full_path(&pkg_path, stores_path_sub);
+        let s_decl = full_pkg(pkg, stores_pkg_sub);
+        files.push(gen_store_viewmodel(name, store, &s_decl, &s_pkg));
     }
 
     // :obj type declarations → Kotlin data classes
     for obj in ast.objects.values() {
-        files.push(gen_obj_data_class(obj, pkg, &pkg_path));
+        let m_pkg  = full_path(&pkg_path, models_path_sub);
+        let m_decl = full_pkg(pkg, models_pkg_sub);
+        files.push(gen_obj_data_class(obj, &m_decl, &m_pkg));
     }
 
     // :enum declarations → Kotlin enum classes (plan §1b)
     for enum_def in ast.enums.values() {
-        files.push(gen_enum_kotlin(enum_def, pkg, &pkg_path));
+        let m_pkg  = full_path(&pkg_path, models_path_sub);
+        let m_decl = full_pkg(pkg, models_pkg_sub);
+        files.push(gen_enum_kotlin(enum_def, &m_decl, &m_pkg));
     }
 
     // :type aliases → Kotlin typealias (plan §1c)
     for type_alias in ast.type_aliases.values() {
-        files.push(gen_type_alias_kotlin(type_alias, pkg, &pkg_path));
+        let m_pkg  = full_path(&pkg_path, models_path_sub);
+        let m_decl = full_pkg(pkg, models_pkg_sub);
+        files.push(gen_type_alias_kotlin(type_alias, &m_decl, &m_pkg));
     }
 
     if uses_camera        { files.push(gen_camera_helper(pkg, &pkg_path)); }
@@ -3661,3 +3744,36 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod arch_tests {
+    use super::*;
+    use crate::parser::ast::{AST, Import};
+
+    #[test]
+    fn test_detect_arch_mvc_from_views_import() {
+        let mut ast = AST::default();
+        ast.imports.push(Import {
+            names: vec![("HomePage".to_string(), None)],
+            path: "./views/pages/HomePage.fr".to_string(),
+        });
+        assert_eq!(detect_arch(&ast), ProjectArch::Mvc);
+    }
+
+    #[test]
+    fn test_detect_arch_clean_from_presentation_import() {
+        let mut ast = AST::default();
+        ast.imports.push(Import {
+            names: vec![("HomePage".to_string(), None)],
+            path: "./presentation/pages/HomePage.fr".to_string(),
+        });
+        assert_eq!(detect_arch(&ast), ProjectArch::Clean);
+    }
+
+    #[test]
+    fn test_detect_arch_flat_when_no_hints() {
+        let ast = AST::default();
+        assert_eq!(detect_arch(&ast), ProjectArch::Flat);
+    }
+}
+

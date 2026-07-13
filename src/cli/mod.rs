@@ -22,6 +22,8 @@ pub mod preview;
 pub mod lint;
 pub mod plugin;
 pub mod icon;
+pub mod icon_bundle;
+pub mod icon_gen;
 pub mod font;
 
 pub use start::{scaffold_project, scaffold_project_in, Architecture, run_init_examples};
@@ -32,7 +34,9 @@ pub use test_runner::run_tests;
 pub use preview::run_preview;
 pub use lint::{run_lint, LintConfig};
 pub use plugin::{plugin_add, plugin_remove, plugin_install, plugin_list, plugin_create, plugin_publish};
-pub use icon::{run_icon_add, IconManifest};
+pub use icon::{run_icon_add, IconManifest, scan_icons_dir};
+pub use icon_bundle::{run_icon_load_bundle, write_default_bundle, scan_icon_bundles, bundle_icon_map, IconBundle, BundleIcon};
+pub use icon_gen::{collect_icon_assets, generate_ios_icon_assets, generate_android_icon_assets, write_icon_lookup_table, log_icon_summary};
 
 /// The Frame framework CLI.
 #[derive(Parser, Debug)]
@@ -148,6 +152,19 @@ pub enum IconCommands {
         /// Optional name for the icon (defaults to filename without extension).
         #[arg(long)]
         name: Option<String>,
+    },
+    /// Load icons from a .frameicons bundle file.
+    LoadBundle {
+        /// Path to the .frameicons bundle file.
+        path: String,
+    },
+    /// List all registered icons.
+    List,
+    /// Generate platform icon assets (PDF for iOS, XML for Android).
+    Generate {
+        /// Target platform: ios, android, or all (default).
+        #[arg(long, default_value = "all")]
+        target: String,
     },
 }
 

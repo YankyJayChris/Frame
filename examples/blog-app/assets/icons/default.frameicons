@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "icons": [
+    {
+      "name": "add",
+      "sf_symbol": "plus",
+      "material": "Add",
+      "svg_path": null,
+      "category": "actions",
+      "tags": [
+        "action",
+        "ui"
+      ]
+    },
+    {
+      "name": "settings",
+      "sf_symbol": "gearshape",
+      "material": "Settings",
+      "svg_path": null,
+      "category": "actions",
+      "tags": [
+        "action",
+        "ui"
+      ]
+    },
+    {
+      "name": "search",
+      "sf_symbol": "magnifyingglass",
+      "material": "Search",
+      "svg_path": null,
+      "category": "actions",
+      "tags": [
+        "action"
+      ]
+    }
+  ]
+}

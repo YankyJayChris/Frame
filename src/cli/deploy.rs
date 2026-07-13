@@ -9,6 +9,8 @@ use crate::compiler::android::AndroidConfig;
 use crate::compiler::ios::IosConfig;
 use crate::plugins::PluginRegistry;
 use crate::cli::font::{FontRegistry, copy_fonts_for_deploy};
+use crate::cli::icon_bundle::write_default_bundle;
+use crate::cli::icon_gen::{generate_ios_icon_assets, generate_android_icon_assets, write_icon_lookup_table};
 
 use std::fs;
 use std::path::Path;
@@ -79,6 +81,16 @@ pub fn deploy_android(project_dir: &Path) -> bool {
     }
 
     let build_dir = project_dir.join("build/android");
+
+    // Write default icon bundle if none exists
+    write_default_bundle(project_dir).ok();
+
+    // Generate icon assets for Android
+    let icon_assets = generate_android_icon_assets(project_dir, &build_dir.join("app/src/main/res/drawable"));
+    if !icon_assets.is_empty() {
+        println!("  Generated {} custom icon XML(s) for Android", icon_assets.len());
+    }
+    write_icon_lookup_table(project_dir, &build_dir).ok();
 
     // Write generated source files
     for file in &files {
@@ -282,6 +294,14 @@ pub fn deploy_ios(project_dir: &Path) -> bool {
         fs::write(&podfile, content).ok();
         println!("  Podfile written to build/ios/Podfile");
     }
+
+    // Generate icon assets for iOS
+    write_default_bundle(project_dir).ok();
+    let icon_assets = generate_ios_icon_assets(project_dir, &build_dir.join("Assets.xcassets/Resources"));
+    if !icon_assets.is_empty() {
+        println!("  Generated {} custom icon PDF(s) for iOS", icon_assets.len());
+    }
+    write_icon_lookup_table(project_dir, &build_dir).ok();
 
     println!("✓ iOS project written to build/ios/");
 

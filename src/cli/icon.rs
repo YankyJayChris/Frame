@@ -81,7 +81,7 @@ fn manifest_path(project_dir: &Path) -> PathBuf {
     project_dir.join("frame-icons.json")
 }
 
-fn load_manifest(project_dir: &Path) -> IconManifest {
+pub(crate) fn load_manifest(project_dir: &Path) -> IconManifest {
     let path = manifest_path(project_dir);
     if path.exists() {
         fs::read_to_string(&path)

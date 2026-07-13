@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::Path;
+use crate::cli::icon_bundle::write_default_bundle;
 
 /// Architecture choice for the new project.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,6 +61,7 @@ fn scaffold_into(root: &Path, name: &str, arch: Architecture) -> std::io::Result
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(root.join("assets/fonts"))?;
     fs::create_dir_all(root.join("assets/images"))?;
+    fs::create_dir_all(root.join("assets/icons"))?;
     fs::create_dir_all(root.join("frame_modules"))?;
 
     match arch {
@@ -77,6 +79,11 @@ fn scaffold_into(root: &Path, name: &str, arch: Architecture) -> std::io::Result
     scaffold_camera_plugin(root)?;
     scaffold_storage_plugin(root)?;
     scaffold_connectivity_plugin(root)?;
+
+    // Write default icon bundle
+    write_default_bundle(root).unwrap_or_else(|e| {
+        eprintln!("Warning: could not write default icon bundle: {e}");
+    });
 
     println!("✓ Created '{}'", name);
     println!();
@@ -844,7 +851,7 @@ fn write_sample_tests(root: &Path, _name: &str, _arch: Architecture) -> std::io:
             "// Run with: frame test\n\n",
             "describe: \"UserStore\" => {\n\n",
             "  it: \"is_loading starts false\" => {\n",
-            "    expect: false .toBeFalse:\n",
+            "    expect: false .toBeFalse:()\n",
             "  }\n\n",
             "  it: \"error starts empty\" => {\n",
             "    expect: \"\" .toBe: \"\"\n",
@@ -893,40 +900,22 @@ fn write_sample_tests(root: &Path, _name: &str, _arch: Architecture) -> std::io:
             "    expect: \"/\" .toBe: \"/\"\n",
             "  }\n\n",
             "  it: \"profile route has typed param userId\" => {\n",
-            "    // route /profile/:userId declares params: { userId: string }\n",
-            "    // generates typed Screen(navController, userId: String?) on Android\n",
-            "    // and ProfileViewController(userId: String?) on iOS\n",
             "    expect: \"/profile/:userId\" .toBe: \"/profile/:userId\"\n",
             "  }\n\n",
             "  it: \"navigate with clear_stack removes back history\" => {\n",
-            "    // navigate(\"/home\", clear_stack: true)\n",
-            "    // Android: navOptions { popUpTo(startDest) { inclusive=true } launchSingleTop=true }\n",
-            "    // iOS: setViewControllers([homeVC], animated: true)\n",
-            "    expect: true .toBeTrue:\n",
+            "    expect: true .toBeTrue:()\n",
             "  }\n\n",
             "  it: \"navigate_replace does not add back stack entry\" => {\n",
-            "    // navigate_replace(\"/login\")\n",
-            "    // Android: navOptions { popUpTo(current) { inclusive=true } launchSingleTop=true }\n",
-            "    // iOS: popViewController(false) + push\n",
-            "    expect: true .toBeTrue:\n",
+            "    expect: true .toBeTrue:()\n",
             "  }\n\n",
             "  it: \"navigate_back_to pops to named route\" => {\n",
-            "    // navigate_back_to(\"/home\")\n",
-            "    // Android: navController.popBackStack(\"/home\", inclusive=false)\n",
-            "    // iOS: popToViewController matching FrameRoutable.frameRoute == \"/home\"\n",
-            "    expect: true .toBeTrue:\n",
+            "    expect: true .toBeTrue:()\n",
             "  }\n\n",
             "  it: \"navigate_modal presents modally\" => {\n",
-            "    // navigate_modal(\"/settings\")\n",
-            "    // Android: navController.navigate(\"/settings\") (dialog destination)\n",
-            "    // iOS: present(routeVC(for: \"/settings\"), animated: true)\n",
-            "    expect: true .toBeTrue:\n",
+            "    expect: true .toBeTrue:()\n",
             "  }\n\n",
             "  it: \"navigate_dismiss closes modal\" => {\n",
-            "    // navigate_dismiss()\n",
-            "    // Android: navController.popBackStack()\n",
-            "    // iOS: dismiss(animated: true)\n",
-            "    expect: true .toBeTrue:\n",
+            "    expect: true .toBeTrue:()\n",
             "  }\n\n",
             "}\n",
         ))?;

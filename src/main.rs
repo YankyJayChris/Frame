@@ -4,7 +4,9 @@ use frame::cli::{
     run_build, deploy_android, deploy_ios, run_tests, run_preview,
     run_lint, LintConfig,
     plugin_add, plugin_remove, plugin_install, plugin_list, plugin_create, plugin_publish,
-    run_init_examples, run_icon_add,
+    run_init_examples, run_icon_add, run_icon_load_bundle,
+    collect_icon_assets, generate_ios_icon_assets, generate_android_icon_assets,
+    log_icon_summary, write_icon_lookup_table,
 };
 use std::path::Path;
 
@@ -135,6 +137,51 @@ fn main() {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
                 });
+            }
+            IconCommands::LoadBundle { path } => {
+                run_icon_load_bundle(&path, Path::new(".")).unwrap_or_else(|e| {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                });
+            }
+            IconCommands::List => {
+                log_icon_summary(Path::new("."));
+            }
+            IconCommands::Generate { target } => {
+                let project_dir = Path::new(".");
+                let _ = std::fs::create_dir_all(project_dir.join("build"));
+                let icons = collect_icon_assets(project_dir);
+                println!("Generating {} icon asset(s) for target: {target}", icons.len());
+
+                match target.as_str() {
+                    "ios" => {
+                        let ios_dst = project_dir.join("build/ios/Assets.xcassets/Resources");
+                        let written = generate_ios_icon_assets(project_dir, &ios_dst);
+                        println!("  iOS: {} PDF icon(s) written to {}", written.len(), ios_dst.display());
+                    }
+                    "android" => {
+                        let android_dst = project_dir.join("build/android/app/src/main/res/drawable");
+                        let written = generate_android_icon_assets(project_dir, &android_dst);
+                        println!("  Android: {} XML icon(s) written to {}", written.len(), android_dst.display());
+                    }
+                    "all" => {
+                        let ios_dst = project_dir.join("build/ios/Assets.xcassets/Resources");
+                        let ios_written = generate_ios_icon_assets(project_dir, &ios_dst);
+                        println!("  iOS: {} PDF icon(s) written to {}", ios_written.len(), ios_dst.display());
+                        let android_dst = project_dir.join("build/android/app/src/main/res/drawable");
+                        let android_written = generate_android_icon_assets(project_dir, &android_dst);
+                        println!("  Android: {} XML icon(s) written to {}", android_written.len(), android_dst.display());
+                    }
+                    other => {
+                        eprintln!("Unknown target: {other}. Use ios, android, or all");
+                        std::process::exit(1);
+                    }
+                }
+
+                write_icon_lookup_table(project_dir, &project_dir.join("build")).unwrap_or_else(|e| {
+                    eprintln!("Warning: could not write icon lookup table: {e}");
+                });
+                println!("✓ Icon generation complete");
             }
         },
 

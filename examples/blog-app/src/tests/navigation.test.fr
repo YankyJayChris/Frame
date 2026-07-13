@@ -12,45 +12,27 @@ describe: "Navigation" => {
   }
 
   it: "profile route has typed param userId" => {
-    // route /profile/:userId declares params: { userId: string }
-    // generates typed Screen(navController, userId: String?) on Android
-    // and ProfileViewController(userId: String?) on iOS
     expect: "/profile/:userId" .toBe: "/profile/:userId"
   }
 
   it: "navigate with clear_stack removes back history" => {
-    // navigate("/home", clear_stack: true)
-    // Android: navOptions { popUpTo(startDest) { inclusive=true } launchSingleTop=true }
-    // iOS: setViewControllers([homeVC], animated: true)
-    expect: true .toBeTrue:
+    expect: true .toBeTrue:()
   }
 
   it: "navigate_replace does not add back stack entry" => {
-    // navigate_replace("/login")
-    // Android: navOptions { popUpTo(current) { inclusive=true } launchSingleTop=true }
-    // iOS: popViewController(false) + push
-    expect: true .toBeTrue:
+    expect: true .toBeTrue:()
   }
 
   it: "navigate_back_to pops to named route" => {
-    // navigate_back_to("/home")
-    // Android: navController.popBackStack("/home", inclusive=false)
-    // iOS: popToViewController matching FrameRoutable.frameRoute == "/home"
-    expect: true .toBeTrue:
+    expect: true .toBeTrue:()
   }
 
   it: "navigate_modal presents modally" => {
-    // navigate_modal("/settings")
-    // Android: navController.navigate("/settings") (dialog destination)
-    // iOS: present(routeVC(for: "/settings"), animated: true)
-    expect: true .toBeTrue:
+    expect: true .toBeTrue:()
   }
 
   it: "navigate_dismiss closes modal" => {
-    // navigate_dismiss()
-    // Android: navController.popBackStack()
-    // iOS: dismiss(animated: true)
-    expect: true .toBeTrue:
+    expect: true .toBeTrue:()
   }
 
 }
