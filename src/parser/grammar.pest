@@ -81,16 +81,19 @@ top_level_decl = _{
 // APP LIFECYCLE BLOCK  (top-level, declared once in project.fr)
 // ============================================================================
 
-/// :app { on_launch: fn  on_foreground: fn  on_background: fn }
-/// Hooks into the host application's process-level lifecycle.
+/// :app { ... } — required in every project.fr
+/// Must declare: default_route (the initial screen), plus optional lifecycle hooks.
 app_lifecycle_block = { ":app" ~ "{" ~ app_lifecycle_entry* ~ "}" }
 
 app_lifecycle_entry = _{
-    app_on_launch
+    app_default_route
+  | app_on_launch
   | app_on_foreground
   | app_on_background
 }
 
+/// default_route: "/" — REQUIRED. The route of the first screen shown on launch.
+app_default_route = { "default_route" ~ ":" ~ string }
 app_on_launch     = { "on_launch"     ~ ":" ~ ident }
 app_on_foreground = { "on_foreground" ~ ":" ~ ident }
 app_on_background = { "on_background" ~ ":" ~ ident }
@@ -486,19 +489,15 @@ fetch_option = _{
     fetch_method
   | fetch_headers
   | fetch_body
-  | fetch_content_type
   | fetch_timeout
 }
 
-fetch_method        = { "method"       ~ ":" ~ (string | ident) }
-fetch_headers       = { "headers"      ~ ":" ~ "{" ~ header_entry* ~ "}" }
-header_entry        = { ident ~ ":" ~ expr ~ ","? }
-fetch_body          = { "body"         ~ ":" ~ "{" ~ body_entry* ~ "}" }
-body_entry          = { ident ~ ":" ~ expr }
-/// content_type: "application/json" | "multipart/form-data" | "application/x-www-form-urlencoded"
-/// Shorthand that sets the Content-Type header without a full headers: block.
-fetch_content_type  = { "content_type" ~ ":" ~ string }
-fetch_timeout       = { "timeout"      ~ ":" ~ integer }
+fetch_method  = { "method"  ~ ":" ~ (string | ident) }
+fetch_headers = { "headers" ~ ":" ~ "{" ~ header_entry* ~ "}" }
+header_entry  = { ident ~ ":" ~ expr ~ ","? }
+fetch_body    = { "body"    ~ ":" ~ "{" ~ body_entry* ~ "}" }
+body_entry    = { ident ~ ":" ~ expr }
+fetch_timeout = { "timeout" ~ ":" ~ integer }
 
 /// .then((data) => { ... }).catch((err) => { ... })
 then_chain = {
@@ -528,6 +527,7 @@ page_prop = _{
   | styles_block
   | state_decl
   | children_block
+  | fn_def             // allow inline page-scoped functions
   | component_node     // allow loose top-level nodes inside page
 }
 

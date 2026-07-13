@@ -399,35 +399,76 @@ wait:UserStore.load(id: "1")
 ### Fetch & Headers
 
 ```fr
-fn loadProfile: async () => {
+// GET with auth header
+fn loadProfile: async (userId: string) => {
     try {
-        result = wait:fetch("/api/users/1", {
+        result = wait:fetch("/api/users/$userId", {
             method: "GET"
             headers: {
                 Authorization: "Bearer $token"
-                Content-Type: "application/json"
+                Accept: "application/json"
             }
             timeout: 10000
         })
-
-        // Chaining
-        result = wait:fetch("/api/data")
-            .then((data) => {
-                log.info("Got: \(data)")
-                return data
-            })
-            .catch((err) => {
-                log.error("Failed: \(err)")
-            })
-
         if result != null {
-            UserStore.data = result
+            UserStore.user = result
         }
     } catch (err) {
         UserStore.error = err
     }
 }
+
+// POST with JSON body
+fn createUser: async () => {
+    result = wait:fetch("/api/users", {
+        method: "POST"
+        headers: {
+            Content-Type: "application/json"
+        }
+        body: {
+            name: userName
+            email: userEmail
+        }
+    })
+}
+
+// POST form-encoded — Content-Type in headers drives body serialization
+fn loginWithForm: async () => {
+    result = wait:fetch("/api/auth/login", {
+        method: "POST"
+        headers: {
+            Content-Type: "application/x-www-form-urlencoded"
+        }
+        body: {
+            username: userInput
+            password: passInput
+        }
+    })
+}
+
+// POST multipart
+fn uploadFile: async () => {
+    result = wait:fetch("/api/upload", {
+        method: "POST"
+        headers: {
+            Content-Type: "multipart/form-data"
+        }
+        body: {
+            file: selectedFile
+            caption: captionText
+        }
+    })
+}
 ```
+
+**Fetch options:** only `method`, `headers`, `body`, and `timeout` are valid. Data goes in `body: { ... }`. `Content-Type` goes in `headers: { ... }`.
+
+| `Content-Type` header | Body encoding |
+|----------------------|--------------|
+| `"application/json"` (default) | JSON |
+| `"application/x-www-form-urlencoded"` | Form-encoded key=value |
+| `"multipart/form-data"` | Multipart |
+
 
 ### Validation
 

@@ -12,6 +12,7 @@ import { isOnline } "frame-connectivity"
 page: {
     name: "Home"
     route: "/home"
+    // Page lifecycle — accept any expression (functions, wait:, lambdas)
     before_enter: checkNetworkAccess
     on_mount:     loadInitialData
     on_background: pausePolling
@@ -40,7 +41,9 @@ page: {
                             children: [
                                 text: { content: "Menu"  styles: { font_weight: "bold"  padding: 8 } }
                                 button: { content: "Dashboard"  on_click: navigate("/dashboard") }
+                                // navigate_replace — settings replaces current screen
                                 button: { content: "Profile"  on_click: navigate("/profile/1") }
+                                // navigate_modal — settings opens as a sheet
                                 button: { content: "Settings"  on_click: navigate_modal("/settings") }
                                 divider: {}
                                 text: { content: "Tags"  styles: { font_weight: "bold"  padding: 8 } }
@@ -49,12 +52,14 @@ page: {
                             ]
                         }
                         column: {
+                            // Component-level lifecycle: fires on mount and when UserStore.user changes
                             on_mount:  refreshList
                             on_update: refreshList
-                            watch:     UserStore.user_name
+                            watch:     UserStore.user
                             on_unmount: stopRefresh
                             styles: { padding: 16  gap: 12  width: 100%  overflow: scroll }
                             children: [
+                                // ── Loading state ──────────────────────────────
                                 text: {
                                     content: "Loading..."
                                     styles: { font_size: 16sp }
@@ -63,41 +68,39 @@ page: {
                                 skeleton: {
                                     show_if: UserStore.is_loading
                                 }
+
+                                // ── User card ──────────────────────────────────
                                 UserCard: {
-                                    name: UserStore.user_name
-                                    email: UserStore.user_email
-                                    bio: UserStore.user_bio
-                                    show_if: UserStore.user_name != ""
+                                    name: UserStore.user.name
+                                    email: UserStore.user.email
+                                    bio: UserStore.user.bio
+                                    show_if: UserStore.user != null
                                 }
-                                card: {
-                                    styles: { padding: 12 }
-                                    show_if: UserStore.user_location != ""
-                                    children: [
-                                        row: {
-                                            styles: { gap: 8  align: "center" }
-                                            children: [
-                                                icon: { name: "location"   styles: { width: 20  height: 20  color: "#666" } }
-                                                text: { content: UserStore.user_location  styles: { font_size: 14sp  color: "#666" } }
-                                            ]
-                                        }
-                                        spacer: { styles: { height: 4 } }
-                                        row: {
-                                            styles: { gap: 8  align: "center" }
-                                            children: [
-                                                icon: { name: "link"  styles: { width: 20  height: 20  color: "#666" } }
-                                                text: { content: UserStore.user_website  styles: { font_size: 14sp  color: "#007BFF" } }
-                                            ]
-                                        }
-                                    ]
-                                }
+
+                                // ── Error state ───────────────────────────────
                                 text: {
                                     content: UserStore.error
                                     styles: { color: "#FF0000"  font_size: 14sp }
                                     show_if: UserStore.error != ""
                                 }
-                                button: { content: "Load Profile"  on_click: wait:loadUser("1") }
-                                button: { content: "Capture Photo"  on_click: wait:capture("jpg", 0.9, "camera") }
-                                button: { content: "Back to Root"  on_click: navigate_back_to("/home") }
+
+                                // ── Actions ───────────────────────────────────
+                                button: {
+                                    content: "Load Profile"
+                                    on_click: wait:loadUser("1")
+                                }
+                                button: {
+                                    content: "Capture Photo"
+                                    // capture with explicit params — format/quality/source
+                                    on_click: wait:capture("jpg", 0.9, "camera")
+                                }
+                                button: {
+                                    content: "Back to Root"
+                                    // pop back to /home, removing all intermediate screens
+                                    on_click: navigate_back_to("/home")
+                                }
+
+                                // ── Card with form controls ────────────────────
                                 card: {
                                     styles: { padding: 16  margin_top: 8 }
                                     children: [
@@ -107,37 +110,49 @@ page: {
                                             styles: { align: "center"  justify: "space_between" }
                                             children: [
                                                 text: { content: "Enable Notifications" }
-                                                switch: { value: UserStore.notifications_enabled  on_change: wait:UserStore.toggleNotifications() }
+                                                switch: { value: notificationsEnabled  on_change: toggleNotifications() }
                                             ]
                                         }
                                         row: {
                                             styles: { align: "center"  justify: "space_between" }
                                             children: [
                                                 text: { content: "Dark Mode" }
-                                                switch: { value: UserStore.dark_mode  on_change: wait:UserStore.toggleDarkMode() }
+                                                switch: { value: darkMode }
                                             ]
                                         }
                                         divider: {}
                                         text: { content: "Volume"  styles: { font_size: 14sp } }
-                                        slider: { value: UserStore.volume  min: 0  max: 100  on_change: wait:UserStore.setVolume() }
+                                        slider: { value: volume  min: 0  max: 100  on_change: adjustVolume() }
                                         text: { content: "Rating"  styles: { font_size: 14sp } }
-                                        rating: { value: 3  max: 5 }
+                                        rating: { value: 3  max: 5  on_change: rateApp() }
+                                        text: { content: "Quantity"  styles: { font_size: 14sp } }
+                                        stepper: { value: quantity  on_increment: inc()  on_decrement: dec() }
                                     ]
                                 }
+
+                                // ── Search ────────────────────────────────────
                                 search_bar: {
-                                    value: UserStore.search_query
+                                    value: searchQuery
                                     placeholder: "Search..."
+                                    on_change: updateQuery()
                                 }
+
+                                // ── Tags & badges ────────────────────────────
                                 row: {
                                     styles: { gap: 8  align: "center" }
                                     children: [
                                         badge: { count: 5 }
-                                        chip: { content: "Filter" }
+                                        chip: { content: "Filter"  on_click: applyFilter() }
                                         tag: { content: "Beta" }
-                                        avatar: { src: UserStore.user_avatar }
+                                        avatar: { src: "https://i.pravatar.cc/40" }
                                     ]
                                 }
+
+                                // ── Progress ──────────────────────────────────
                                 progress_bar: { value: 0.65 }
+                                progress_circle: { value: 0.8 }
+
+                                // ── Toast trigger ────────────────────────────
                                 button: {
                                     content: "Show Toast"
                                     on_click: showToast("Hello from Frame!")
@@ -155,23 +170,9 @@ page: {
             on_click: handleAdd()
         }
     ]
-
-    fn openSearch: () => {
-        log.info("Home: opening search")
-        navigate("/search")
-    }
-
-    fn openSettings: () => {
-        log.info("Home: opening settings")
-        navigate_modal("/settings")
-    }
-
-    fn handleAdd: () => {
-        log.info("Home: add button pressed")
-        navigate("/profile/new")
-    }
 }
 
+// ── Profile page — typed route params ─────────────────────────────────────────
 page: {
     name: "Profile"
     route: "/profile/:userId"
@@ -194,24 +195,7 @@ page: {
                 column: {
                     styles: { padding: 16  gap: 12 }
                     children: [
-                        card: {
-                            styles: { padding: 16  align: "center" }
-                            children: [
-                                avatar: { src: UserStore.user_avatar  styles: { width: 80  height: 80  border_radius: 40 } }
-                                spacer: { styles: { height: 8 } }
-                                text: { content: UserStore.user_name  styles: { font_size: 20sp  font_weight: "bold" } }
-                                text: { content: UserStore.user_email  styles: { font_size: 14sp  color: "#666" } }
-                                text: { content: UserStore.user_location  styles: { font_size: 14sp  color: "#999" } }
-                            ]
-                        }
-                        card: {
-                            styles: { padding: 16 }
-                            children: [
-                                text: { content: "About"  styles: { font_size: 16sp  font_weight: "bold" } }
-                                spacer: { styles: { height: 4 } }
-                                text: { content: UserStore.user_bio  styles: { font_size: 14sp  color: "#444" } }
-                            ]
-                        }
+                        avatar: { src: "https://i.pravatar.cc/80" }
                         button: { content: "Go Home"  on_click: navigate("/home", clear_stack: true) }
                         button: { content: "Dismiss"  on_click: navigate_dismiss() }
                     ]
@@ -219,17 +203,9 @@ page: {
             ]
         }
     ]
-
-    fn handleReportUser: () => {
-        log.info("Profile: reporting user \(params.userId)")
-        showToast("Report submitted for user \(params.userId)")
-    }
-
-    fn handleShareProfile: () => {
-        log.info("Profile: sharing user \(params.userId)")
-    }
 }
 
+// ── Page lifecycle functions ──────────────────────────────────────────────────
 fn checkNetworkAccess: async () => {
     :var online = wait:isOnline("any")
     if online != true {

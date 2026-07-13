@@ -108,3 +108,61 @@ Plugin dependencies are specified as key-value pairs where the key is the plugin
 |----------|-------------|
 | `FRAME_PATH` | Path to the Frame CLI binary (used by VS Code extension) |
 | `FRAME_WORKSPACE_ROOT` | Override workspace root path |
+
+## Build Command Details
+
+### `frame build`
+
+The `frame build` command is the main entry point for compiling your Frame project. It performs these steps:
+
+1. **Parse** — Reads all `.fr` files from `src/` and validates syntax
+2. **Resolve** — Resolves imports and checks for circular dependencies
+3. **Type Check** — Validates prop types, function signatures, and async/await usage
+4. **Generate Icons** — Creates platform-specific app icons (see [App Icons](app-icons.md))
+5. **Generate Code** — Outputs platform-specific code for Android and iOS
+6. **Cache** — Updates incremental build cache for faster rebuilds
+
+### Icon Generation During Build
+
+As part of the build process, Frame automatically:
+
+1. Reads your app icon source (from `frame.config.json: icon` or uses default)
+2. Validates the icon format (SVG, PNG, or JPEG)
+3. Generates iOS app icons at 12 required sizes
+4. Generates Android app icons at 6 density scales
+5. Creates platform metadata (Contents.json for iOS, colors.xml for Android)
+
+For detailed icon configuration, see [App Icons](app-icons.md).
+
+### Watch Mode
+
+Use `--watch` to rebuild automatically when files change:
+
+```bash
+frame build --watch
+```
+
+This is useful during development — your code recompiles instantly as you edit.
+
+### Strict Mode
+
+Use `--strict` to treat warnings as errors:
+
+```bash
+frame build --strict
+```
+
+This ensures code quality by catching potential issues early.
+
+### Output
+
+Build artifacts are written to:
+- Android: `build/android/`
+- iOS: `build/ios/`
+
+After a successful build, you can deploy:
+
+```bash
+frame deploy android
+frame deploy ios
+```

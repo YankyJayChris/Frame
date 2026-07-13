@@ -88,11 +88,14 @@ pub fn print(ast: &AST) -> String {
     }
 
     // :app lifecycle block (only emitted when at least one hook is declared)
-    if ast.on_launch.is_some() || ast.on_foreground.is_some() || ast.on_background.is_some() {
+    if ast.default_route.is_some() || ast.on_launch.is_some()
+        || ast.on_foreground.is_some() || ast.on_background.is_some()
+    {
         out.push_str(":app {\n");
-        if let Some(f) = &ast.on_launch     { out.push_str(&format!("    on_launch:     {f}\n")); }
-        if let Some(f) = &ast.on_foreground { out.push_str(&format!("    on_foreground: {f}\n")); }
-        if let Some(f) = &ast.on_background { out.push_str(&format!("    on_background: {f}\n")); }
+        if let Some(r) = &ast.default_route   { out.push_str(&format!("    default_route: \"{r}\"\n")); }
+        if let Some(f) = &ast.on_launch       { out.push_str(&format!("    on_launch:     {f}\n")); }
+        if let Some(f) = &ast.on_foreground   { out.push_str(&format!("    on_foreground: {f}\n")); }
+        if let Some(f) = &ast.on_background   { out.push_str(&format!("    on_background: {f}\n")); }
         out.push_str("}\n\n");
     }
 

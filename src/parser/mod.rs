@@ -168,6 +168,19 @@ fn merge_ast(target: &mut AST, src: AST) {
     target.breakpoints.extend(src.breakpoints);
     target.typography.extend(src.typography);
     target.objects.extend(src.objects);
+    // Merge app-level lifecycle fields (defined once in project.fr, take first non-None value)
+    if target.default_route.is_none() {
+        target.default_route = src.default_route;
+    }
+    if target.on_launch.is_none() {
+        target.on_launch = src.on_launch;
+    }
+    if target.on_foreground.is_none() {
+        target.on_foreground = src.on_foreground;
+    }
+    if target.on_background.is_none() {
+        target.on_background = src.on_background;
+    }
 }
 
 // ─── Top-level file parser ────────────────────────────────────────────────────
@@ -236,6 +249,10 @@ pub(crate) fn parse_source(source: &str, file_path: &str, errors: &mut Vec<Frame
                             Rule::app_lifecycle_block => {
                                 for entry in inner.into_inner() {
                                     match entry.as_rule() {
+                                        Rule::app_default_route => {
+                                            ast.default_route = entry.into_inner().next()
+                                                .map(|p| strip_quotes(p.as_str()));
+                                        }
                                         Rule::app_on_launch => {
                                             ast.on_launch = entry.into_inner().next()
                                                 .map(|p| p.as_str().to_string());
@@ -1780,16 +1797,7 @@ fn parse_wait_fetch_expr(pair: Pair<Rule>) -> FetchExpr {
                                 fe.body = Some(Expr::Literal(Value::Object(map)));
                             }
                         }
-                        // content_type: "..." — shorthand that inserts Content-Type header
-                        Rule::fetch_content_type => {
-                            let ct = opt.into_inner().next()
-                                .map(|p| strip_quotes(p.as_str()))
-                                .unwrap_or_else(|| "application/json".to_string());
-                            fe.headers.insert(
-                                "Content-Type".to_string(),
-                                Expr::Literal(Value::Str(ct)),
-                            );
-                        }
+                        // content_type is NOT a fetch option — use headers: { Content-Type: "..." }
                         _ => {}
                     }
                 }

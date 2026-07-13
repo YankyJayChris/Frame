@@ -2,7 +2,8 @@
 
 Frame uses `wait:fetch()` for making HTTP requests. The `wait:` prefix is required because fetch is an async operation.
 
-The options block accepts exactly four keys: `method`, `headers`, `body`, and `timeout`. All other data belongs inside `body`.
+The options block accepts exactly four keys: `method`, `headers`, `body`, and `timeout`.
+Data you want to send goes inside `body: { ... }`. The `Content-Type` header goes inside `headers: { ... }`.
 
 ## GET Request
 
@@ -15,12 +16,15 @@ fn loadUsers: async () => {
 }
 ```
 
-## POST Request with Body
+## POST with JSON Body
 
 ```fr
 fn createUser: async () => {
     result = wait:fetch("/api/users", {
         method: "POST"
+        headers: {
+            Content-Type: "application/json"
+        }
         body: {
             name: "Alice"
             email: "alice@example.com"
@@ -32,12 +36,49 @@ fn createUser: async () => {
 }
 ```
 
+## POST as Form-Encoded
+
+```fr
+fn loginWithForm: async () => {
+    result = wait:fetch("/api/auth/login", {
+        method: "POST"
+        headers: {
+            Content-Type: "application/x-www-form-urlencoded"
+        }
+        body: {
+            username: userInput
+            password: passInput
+        }
+    })
+}
+```
+
+## POST as Multipart
+
+```fr
+fn uploadFile: async () => {
+    result = wait:fetch("/api/upload", {
+        method: "POST"
+        headers: {
+            Content-Type: "multipart/form-data"
+        }
+        body: {
+            file: selectedFile
+            caption: captionText
+        }
+    })
+}
+```
+
 ## PUT Request
 
 ```fr
 fn updateUser: async (id: string) => {
     result = wait:fetch("/api/users/$id", {
         method: "PUT"
+        headers: {
+            Content-Type: "application/json"
+        }
         body: {
             name: "Alice Updated"
             email: "alice@example.com"
@@ -57,7 +98,7 @@ fn deleteUser: async (id: string) => {
 }
 ```
 
-## Request with Headers
+## With Auth Header
 
 ```fr
 fn fetchWithAuth: async (token: string) => {
@@ -65,14 +106,13 @@ fn fetchWithAuth: async (token: string) => {
         method: "GET"
         headers: {
             Authorization: "Bearer \(token)"
-            Content-Type: "application/json"
             Accept: "application/json"
         }
     })
 }
 ```
 
-## Request with Timeout
+## With Timeout
 
 ```fr
 fn fetchWithTimeout: async () => {
@@ -80,46 +120,6 @@ fn fetchWithTimeout: async () => {
         method: "GET"
         timeout: 10000
     })
-}
-```
-
-## POST with Headers and Body
-
-```fr
-fn login: async (username: string, password: string) => {
-    result = wait:fetch("/api/auth/login", {
-        method: "POST"
-        headers: {
-            Content-Type: "application/json"
-        }
-        body: {
-            username: username
-            password: password
-        }
-    })
-    if result != null {
-        AuthStore.token = result.token
-    }
-}
-```
-
-## Chaining with .then and .catch
-
-```fr
-fn fetchData: async () => {
-    result = wait:fetch("/api/data", { method: "GET" })
-        .then: (data) => {
-            log.info("Got: \(data)")
-            return data
-        }
-        .catch: (err) => {
-            log.error("Failed: \(err)")
-            return null
-        }
-
-    if result != null {
-        UserStore.data = result
-    }
 }
 ```
 
@@ -135,6 +135,7 @@ fn loadProfile: async (userId: string) => {
             method: "GET"
             headers: {
                 Authorization: "Bearer \(UserStore.token)"
+                Accept: "application/json"
             }
             timeout: 5000
         })
@@ -156,13 +157,31 @@ fn loadProfile: async (userId: string) => {
 ## Fetch API Reference
 
 ```fr
-// GET — minimal
+// Minimal GET
 result = wait:fetch("/api/data", { method: "GET" })
 
-// POST with body
+// POST with JSON body
 result = wait:fetch("/api/data", {
     method: "POST"
-    body: { name: "Alice"  email: "alice@example.com" }
+    headers: {
+        Content-Type: "application/json"
+    }
+    body: {
+        name: "Alice"
+        email: "alice@example.com"
+    }
+})
+
+// POST form-encoded
+result = wait:fetch("/api/login", {
+    method: "POST"
+    headers: {
+        Content-Type: "application/x-www-form-urlencoded"
+    }
+    body: {
+        username: "alice"
+        password: "secret"
+    }
 })
 
 // Full options
@@ -171,6 +190,7 @@ result = wait:fetch("/api/data", {
     headers: {
         Authorization: "Bearer \(token)"
         Content-Type: "application/json"
+        Accept: "application/json"
     }
     body: {
         name: "Alice"
@@ -187,69 +207,29 @@ result = wait:fetch("/api/data", { method: "GET" })
 
 ## Fetch Options
 
-| Option         | Type     | Default   | Description                              |
-|----------------|----------|-----------|------------------------------------------|
-| `method`       | string   | `"GET"`   | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"DELETE"` |
-| `headers`      | object   | `{}`      | Key-value pairs added to request headers |
-| `body`         | object   | `null`    | Request payload — format depends on `content_type` |
-| `content_type` | string   | (none)    | Shorthand for `Content-Type` header — drives body serialization |
-| `timeout`      | int (ms) | `30000`   | Request timeout in milliseconds          |
+| Option    | Type     | Default   | Description                              |
+|-----------|----------|-----------|------------------------------------------|
+| `method`  | string   | `"GET"`   | HTTP method: `"GET"`, `"POST"`, `"PUT"`, `"DELETE"` |
+| `headers` | object   | `{}`      | Key-value request headers — set `Content-Type` here |
+| `body`    | object   | `null`    | Request payload — serialized based on `Content-Type` |
+| `timeout` | int (ms) | `30000`   | Request timeout in milliseconds          |
 
-> **Important:** Only `method`, `headers`, `body`, `content_type`, and `timeout` are valid inside the options block.
-> Any data you want to send must go inside `body: { ... }`.
+> **Rules:**
+> - Only `method`, `headers`, `body`, and `timeout` are valid inside the options block
+> - `Content-Type` belongs inside `headers: { ... }`
+> - Request data belongs inside `body: { ... }`
 
 ## Body Serialization
 
-The `content_type` (or `Content-Type` inside `headers:`) drives how `body:` is serialized:
+The `Content-Type` header (set in `headers:`) drives how `body:` is serialized:
 
-| `content_type` value | Body encoding | Android | iOS |
-|----------------------|--------------|---------|-----|
+| `Content-Type` | Body encoding | Android | iOS |
+|----------------|--------------|---------|-----|
 | `"application/json"` (default) | JSON | `Gson().toJson(body)` | `JSONSerialization` |
-| `"application/x-www-form-urlencoded"` | URL-encoded form | `FormBody.Builder` | `key=value&...` string |
+| `"application/x-www-form-urlencoded"` | URL-encoded | `FormBody.Builder` | `key=value&...` |
 | `"multipart/form-data"` | Multipart | `MultipartBody.Builder` | `URLSession uploadTask` |
 
-### JSON (default)
-
-```fr
-result = wait:fetch("/api/users", {
-    method: "POST"
-    body: {
-        name: "Alice"
-        email: "alice@example.com"
-    }
-})
-```
-
-### Form-encoded
-
-```fr
-result = wait:fetch("/api/auth", {
-    method: "POST"
-    content_type: "application/x-www-form-urlencoded"
-    body: {
-        username: userInput
-        password: passInput
-    }
-})
-```
-
-### Explicit Content-Type via headers
-
-```fr
-result = wait:fetch("/api/upload", {
-    method: "POST"
-    headers: {
-        Content-Type: "application/x-www-form-urlencoded"
-        Authorization: "Bearer \(token)"
-    }
-    body: {
-        file_name: "photo.jpg"
-        data: base64Data
-    }
-})
-```
-
-> `content_type:` is a shorthand for setting `Content-Type` in `headers:`. If you need to set both `Content-Type` and other headers, use `headers:` directly.
+> When `body:` is provided but no `Content-Type` header is set, Frame defaults to `application/json`.
 
 ## Platform Notes
 

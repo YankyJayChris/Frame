@@ -1,45 +1,21 @@
 :store UserStore {
-    user_name: string = "Jane Smith"
-    user_email: string = "jane@example.com"
-    user_bio: string = "Full-stack developer & photographer based in New York. Building beautiful apps with Frame."
-    user_location: string = "New York, NY"
-    user_website: string = "janesmith.dev"
-    user_avatar: string = "https://i.pravatar.cc/150?u=jane"
-    is_loading: bool = false
-    error: string = ""
-    dark_mode: bool = false
-    notifications_enabled: bool = true
-    volume: float = 50
+    user:       object = null
+    is_loading: bool   = false
+    error:      string = ""
 
     fn load: async (id: string) => {
         UserStore.is_loading = true
         UserStore.error = ""
-        UserStore.user_name = "Jane Smith"
-        UserStore.user_email = "jane@example.com"
-        UserStore.user_bio = "Full-stack developer & photographer capturing moments through code. Passionate about open source and building beautiful, accessible apps. Based in NYC."
-        UserStore.user_location = "New York, NY"
-        UserStore.user_website = "janesmith.dev"
-        UserStore.user_avatar = "https://i.pravatar.cc/150?u=jane"
+        try {
+            result = wait:fetch("/api/users/$id", { method: "GET" })
+            if result != null {
+                UserStore.user = result
+            } else {
+                UserStore.error = "User not found"
+            }
+        } catch (err) {
+            UserStore.error = err
+        }
         UserStore.is_loading = false
-    }
-
-    fn toggleDarkMode: () => {
-        if UserStore.dark_mode == true {
-            UserStore.dark_mode = false
-        } else {
-            UserStore.dark_mode = true
-        }
-    }
-
-    fn toggleNotifications: () => {
-        if UserStore.notifications_enabled == true {
-            UserStore.notifications_enabled = false
-        } else {
-            UserStore.notifications_enabled = true
-        }
-    }
-
-    fn setVolume: (val: float) => {
-        UserStore.volume = val
     }
 }

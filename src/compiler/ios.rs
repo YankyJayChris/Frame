@@ -980,7 +980,11 @@ target '{safe_name}' do
 // ─── MainViewController.swift ─────────────────────────────────────────────────
 
 fn gen_main_view_controller(ast: &AST, bundle_id: &str) -> OutputFile {
-    let first_vc = ast.pages.first()
+    // default_route from :app { default_route: "..." } selects the first VC to push.
+    let default_route = ast.default_route.as_deref().unwrap_or("/");
+    let first_vc = ast.pages.iter()
+        .find(|p| p.route == default_route)
+        .or_else(|| ast.pages.first())
         .map(|p| format!("{}ViewController()", p.name))
         .unwrap_or_else(|| "UIViewController()".to_string());
 
@@ -2399,7 +2403,7 @@ fn emit_swift_fetch(fe: &FetchExpr, indent: usize) -> String {
     let then_code: String = fe.then_branch.iter().map(|s| emit_swift_stmt(s, indent + 2)).collect();
     let catch_code: String = fe.catch_branch.iter().map(|s| emit_swift_stmt(s, indent + 2)).collect();
 
-    // Determine Content-Type from user-declared headers (user wins; never hardcode)
+    // Content-Type comes exclusively from user-declared headers — never hardcoded
     let content_type = fe.headers.iter()
         .find(|(k, _)| k.to_lowercase() == "content-type")
         .map(|(_, v)| match v {
@@ -2407,43 +2411,43 @@ fn emit_swift_fetch(fe: &FetchExpr, indent: usize) -> String {
             _ => "application/json".to_string(),
         });
 
-    // Emit non-Content-Type headers first; body logic sets Content-Type
+    // Emit all user headers
     let headers_code: String = fe.headers.iter()
-        .filter(|(k, _)| k.to_lowercase() != "content-type")
         .map(|(k, v)| format!("{pad}        request.setValue({}, forHTTPHeaderField: \"{}\")\n",
             emit_swift_expr(v), k))
         .collect();
 
-    // Build body based on Content-Type (or default to JSON when body present)
+    // Body serialization — driven by Content-Type header value
     let body_code = if let Some(body_expr) = &fe.body {
         let body_val = emit_swift_expr(body_expr);
         let ct = content_type.as_deref().unwrap_or("application/json");
         if ct.contains("x-www-form-urlencoded") {
             format!(
-                "{pad}        // Form-encoded body\n\
+                "{pad}        // Form-encoded body (Content-Type set via headers:)\n\
                  {pad}        if let bodyDict = {body_val} as? [String: Any] {{\n\
                  {pad}            let pairs = bodyDict.map {{ \"\\($0.key)=\\($0.value)\" }}.joined(separator: \"&\")\n\
                  {pad}            request.httpBody = pairs.data(using: .utf8)\n\
-                 {pad}        }}\n\
-                 {pad}        request.setValue(\"application/x-www-form-urlencoded\", forHTTPHeaderField: \"Content-Type\")\n"
+                 {pad}        }}\n"
             )
         } else if ct.contains("multipart") {
             format!(
-                "{pad}        // Multipart body — use URLSession uploadTask for production multipart\n\
-                 {pad}        request.setValue(\"{ct}\", forHTTPHeaderField: \"Content-Type\")\n"
+                "{pad}        // Multipart body (Content-Type set via headers:)\n\
+                 {pad}        // Use URLSession uploadTask for production multipart uploads\n"
             )
         } else {
-            // Default: JSON
+            // Default: JSON — only inject Content-Type if user didn't set it in headers
+            let inject_ct = if content_type.is_none() {
+                format!("{pad}        request.setValue(\"application/json\", forHTTPHeaderField: \"Content-Type\")\n")
+            } else {
+                String::new()
+            };
             format!(
                 "{pad}        if let bodyData = try? JSONSerialization.data(withJSONObject: {body_val}) {{\n\
                  {pad}            request.httpBody = bodyData\n\
                  {pad}        }}\n\
-                 {pad}        request.setValue(\"application/json\", forHTTPHeaderField: \"Content-Type\")\n"
+                 {inject_ct}"
             )
         }
-    } else if let Some(ct) = &content_type {
-        // Content-Type declared but no body — set the header anyway
-        format!("{pad}        request.setValue(\"{ct}\", forHTTPHeaderField: \"Content-Type\")\n")
     } else {
         String::new()
     };

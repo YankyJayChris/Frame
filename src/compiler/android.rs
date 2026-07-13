@@ -824,11 +824,12 @@ object FrameStoreRegistry {{
 
 fn gen_main_activity(ast: &AST, pkg: &str) -> OutputFile {
     let pkg_path = pkg.replace('.', "/");
-    let first_route = ast
-        .pages
-        .first()
-        .map(|p| p.route.clone())
-        .unwrap_or_else(|| "/".to_string());
+
+    // default_route comes from :app { default_route: "..." } — required in project.fr
+    let first_route = ast.default_route.as_deref()
+        .or_else(|| ast.pages.first().map(|p| p.route.as_str()))
+        .unwrap_or("/")
+        .to_string();
 
     // Build import lines for each screen
     let screen_imports: String = ast
@@ -2690,7 +2691,7 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
     let url = emit_expr(&fe.url);
     let method = fe.method.to_uppercase();
 
-    // Determine Content-Type from headers (user-declared wins; default to json when body present)
+    // Content-Type comes exclusively from user-declared headers — never hardcoded
     let content_type = fe.headers.iter()
         .find(|(k, _)| k.to_lowercase() == "content-type")
         .map(|(_, v)| match v {
@@ -2698,18 +2699,16 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
             _ => "application/json".to_string(),
         });
 
-    // Emit headers — skip Content-Type here, we'll set it via the MediaType
+    // Emit all user headers (OkHttp addHeader)
     let headers_code: String = fe.headers.iter()
-        .filter(|(k, _)| k.to_lowercase() != "content-type")
         .map(|(k, v)| format!("{i3}.addHeader(\"{}\", {})\n", k, emit_expr(v)))
         .collect();
 
-    // Build request body based on Content-Type
+    // Body serialization — driven by Content-Type
     let body_code = if let Some(body_expr) = &fe.body {
         let body_val = emit_expr(body_expr);
         let ct = content_type.as_deref().unwrap_or("application/json");
         if ct.contains("x-www-form-urlencoded") {
-            // Form-encoded: build FormBody
             format!(
                 "{i2}// Form-encoded body\n\
                  {i2}val formBody = okhttp3.FormBody.Builder()\n\
@@ -2717,7 +2716,6 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
                  {i2}    .build()\n"
             )
         } else if ct.contains("multipart") {
-            // Multipart: build MultipartBody
             format!(
                 "{i2}// Multipart body\n\
                  {i2}val multipartBody = okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)\n\
@@ -2725,7 +2723,7 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
                  {i2}    .build()\n"
             )
         } else {
-            // Default: JSON body
+            // Default: JSON
             format!(
                 "{i2}val bodyJson = com.google.gson.Gson().toJson({body_val})\n\
                  {i2}val requestBody = bodyJson.toRequestBody(\"application/json; charset=utf-8\".toMediaType())\n"
@@ -2735,25 +2733,20 @@ fn emit_fetch_block(fe: &FetchExpr, indent: usize) -> String {
         String::new()
     };
 
-    // Determine the body variable name and method call
-    let (body_var, method_call) = if !body_code.is_empty() {
+    // Method call — attach body variable if present
+    let method_call = if !body_code.is_empty() {
         let ct = content_type.as_deref().unwrap_or("application/json");
-        let var = if ct.contains("x-www-form-urlencoded") {
-            "formBody"
-        } else if ct.contains("multipart") {
-            "multipartBody"
-        } else {
-            "requestBody"
-        };
-        (var, format!(".method(\"{method}\", {var})"))
+        let var = if ct.contains("x-www-form-urlencoded") { "formBody" }
+                  else if ct.contains("multipart") { "multipartBody" }
+                  else { "requestBody" };
+        format!(".method(\"{method}\", {var})")
     } else {
-        ("", match method.as_str() {
+        match method.as_str() {
             "GET"    => ".get()".to_string(),
             "DELETE" => ".delete()".to_string(),
             _        => format!(".method(\"{method}\", null)"),
-        })
+        }
     };
-    let _ = body_var; // suppress unused warning
 
     let then_code: String = fe.then_branch.iter().map(|s| emit_stmt(s, indent + 3)).collect();
     let catch_code: String = fe.catch_branch.iter().map(|s| emit_stmt(s, indent + 3)).collect();

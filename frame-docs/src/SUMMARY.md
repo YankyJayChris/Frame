@@ -42,6 +42,7 @@
 
 # Platform & Tooling
 
+- [App Icons](app-icons.md)
 - [Icon System](icon-system.md)
 - [Plugin System](plugin-system.md)
 - [CLI Reference](cli-reference.md)

@@ -1,11 +1,11 @@
 {
-  "./src/models/UserObj.fr": "6ab3560e20e50d2aa0769fad4d522eccb1c372bcffcfccaeefa04e2ebe928935",
-  "./src/models/UserStore.fr": "254a411b6ca75b2b3601a28363d3adf67aaa9e4e799ea61eb1c9e6ba76bb00a1",
-  "./src/project.fr": "bd559e840d40615160627243ad95d28bd878d4f63816ba71ca3693ed275c3ffb",
-  "./src/views/components/UserCard.fr": "075d2cde45e462192427117cee48530f723b63dfff2bc5d247d9fc0373e36c87",
-  "./src/tests/navigation.test.fr": "e76b2911e7007b56a4508b49cb07fdf9d29b7db0172637a083ff332a843a0777",
-  "./src/controllers/UserController.fr": "1cc5103cdbb1b88ec206325615a5d1b2141eceab405ddc569d1bf00f77226ece",
   "./src/views/pages/HomePage.fr": "22d31e5d0f3957b014ace0f0c754bf9d8ba300d0f620d0bb03bd2b4cad9bd4ff",
+  "./src/tests/api.test.fr": "98f2de0facb3759a49fa8dd72e96a65c19eb722222afbe7592c78a03221c2d30",
+  "./src/views/components/UserCard.fr": "075d2cde45e462192427117cee48530f723b63dfff2bc5d247d9fc0373e36c87",
+  "./src/models/UserObj.fr": "6ab3560e20e50d2aa0769fad4d522eccb1c372bcffcfccaeefa04e2ebe928935",
+  "./src/tests/navigation.test.fr": "e76b2911e7007b56a4508b49cb07fdf9d29b7db0172637a083ff332a843a0777",
+  "./src/project.fr": "bd559e840d40615160627243ad95d28bd878d4f63816ba71ca3693ed275c3ffb",
   "./src/tests/UserStore.test.fr": "1f36b79a800b69175f3d459459913be6035488cdd73abb5096f9655f4ea5e3a2",
-  "./src/tests/api.test.fr": "98f2de0facb3759a49fa8dd72e96a65c19eb722222afbe7592c78a03221c2d30"
+  "./src/controllers/UserController.fr": "1cc5103cdbb1b88ec206325615a5d1b2141eceab405ddc569d1bf00f77226ece",
+  "./src/models/UserStore.fr": "254a411b6ca75b2b3601a28363d3adf67aaa9e4e799ea61eb1c9e6ba76bb00a1"
 }

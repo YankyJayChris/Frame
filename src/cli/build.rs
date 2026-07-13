@@ -2,7 +2,7 @@
 //! --watch, --strict, --locale, collect-all-errors, success summary.
 
 use crate::parser::parse_project;
-use crate::compiler::{gen_android, gen_ios};
+use crate::compiler::{gen_android, gen_ios, generate_android_icons, generate_ios_icons, validate_icon_source};
 use crate::compiler::android::AndroidConfig;
 use crate::compiler::ios::IosConfig;
 
@@ -24,6 +24,9 @@ pub struct BuildConfig {
     pub render_mode: Option<String>,
     pub min_android_sdk: Option<u64>,
     pub min_ios: Option<String>,
+    /// Optional custom icon path (SVG, PNG, or JPEG) for app icon generation
+    /// If not provided, uses the default Frame icon
+    pub icon: Option<String>,
 }
 
 // ─── Config validation ────────────────────────────────────────────────────────
@@ -246,6 +249,36 @@ fn run_build_once(project_dir: &Path, strict: bool, locale: &Option<String>) -> 
         }
     };
 
+    // 4b. Validate :app {} block — required, must have default_route
+    {
+        let mut app_errors: Vec<String> = Vec::new();
+        if ast.default_route.is_none() {
+            if ast.on_launch.is_none() && ast.on_foreground.is_none() && ast.on_background.is_none() {
+                app_errors.push(
+                    "Missing required :app {} block in src/project.fr.\n\n  Add:\n\n    :app {\n        default_route: \"/\"   // route of first screen\n    }\n\n  The default_route is required — it tells Frame which screen to show on launch.".to_string()
+                );
+            } else {
+                app_errors.push(
+                    "Missing required default_route in :app {} block.\n\n  Add:\n\n    :app {\n        default_route: \"/\"   // route of first screen\n    }".to_string()
+                );
+            }
+        } else {
+            let dr = ast.default_route.as_deref().unwrap_or("/");
+            if !ast.pages.is_empty() && !ast.pages.iter().any(|p| p.route == dr) {
+                let known: Vec<&str> = ast.pages.iter().map(|p| p.route.as_str()).collect();
+                app_errors.push(format!(
+                    "default_route \"{}\" does not match any page route.\n  Known routes: {}",
+                    dr, known.join(", ")
+                ));
+            }
+        }
+        if !app_errors.is_empty() {
+            eprintln!("Build failed:");
+            for e in &app_errors { eprintln!("  error: {e}"); }
+            return false;
+        }
+    }
+
     // 5. Generate Android output
     let android_cfg = android_config(&config);
     let android_files = gen_android(&ast, &android_cfg);
@@ -257,6 +290,27 @@ fn run_build_once(project_dir: &Path, strict: bool, locale: &Option<String>) -> 
             eprintln!("warning: could not write {}", dest.display());
         }
     }
+    
+    // 5a. Generate and write Android icons
+    let icon_path_opt = config.get("icon").and_then(|v| v.as_str());
+    match validate_icon_source(icon_path_opt, project_dir) {
+        Ok(icon_path) => {
+            match generate_android_icons(&icon_path) {
+                Ok(icon_files) => {
+                    for file in icon_files {
+                        let dest = android_out.join(&file.path);
+                        if let Some(parent) = dest.parent() { fs::create_dir_all(parent).ok(); }
+                        if fs::write(&dest, &file.content).is_err() {
+                            eprintln!("warning: could not write Android icon {}", file.path);
+                        }
+                    }
+                }
+                Err(e) => eprintln!("warning: could not generate Android icons: {}", e),
+            }
+        }
+        Err(e) => eprintln!("warning: icon generation disabled: {}", e),
+    }
+    
     // Make gradlew executable on Unix
     #[cfg(unix)]
     {
@@ -280,6 +334,27 @@ fn run_build_once(project_dir: &Path, strict: bool, locale: &Option<String>) -> 
         if let Some(parent) = dest.parent() { fs::create_dir_all(parent).ok(); }
         if fs::write(&dest, &file.content).is_err() {
             eprintln!("warning: could not write {}", dest.display());
+        }
+    }
+    
+    // 6a. Generate and write iOS icons
+    match validate_icon_source(icon_path_opt, project_dir) {
+        Ok(icon_path) => {
+            match generate_ios_icons(&icon_path) {
+                Ok(icon_files) => {
+                    for file in icon_files {
+                        let dest = ios_out.join(&file.path);
+                        if let Some(parent) = dest.parent() { fs::create_dir_all(parent).ok(); }
+                        if fs::write(&dest, &file.content).is_err() {
+                            eprintln!("warning: could not write iOS icon {}", file.path);
+                        }
+                    }
+                }
+                Err(e) => eprintln!("warning: could not generate iOS icons: {}", e),
+            }
+        }
+        Err(_) => {
+            // Already warned above, skip
         }
     }
 

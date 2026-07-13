@@ -1,45 +1,27 @@
 :store UserStore {
-    user_name: string = "John Doe"
-    user_email: string = "john@example.com"
-    user_bio: string = "UI/UX Designer crafting pixel-perfect experiences. Loves design systems and accessibility."
-    user_avatar: string = "https://i.pravatar.cc/150?u=john"
-    user_location: string = "San Francisco, CA"
-    user_website: string = "johndoe.design"
-    is_loading: bool = false
-    error: string = ""
-    dark_mode: bool = false
-    notifications_enabled: bool = true
-    volume: float = 75
+    :var user: object? = null
+    :var mut is_loading: bool = false
+    :var mut error: string = ""
 
     fn load: async (id: string) => {
-        UserStore.is_loading = true
-        UserStore.error = ""
-        UserStore.user_name = "John Doe"
-        UserStore.user_email = "john@example.com"
-        UserStore.user_bio = "UI/UX Designer crafting pixel-perfect experiences. Loves design systems, accessibility, and dark mode."
-        UserStore.user_location = "San Francisco, CA"
-        UserStore.user_website = "johndoe.design"
-        UserStore.user_avatar = "https://i.pravatar.cc/150?u=john"
-        UserStore.is_loading = false
-    }
-
-    fn toggleDarkMode: () => {
-        if UserStore.dark_mode == true {
-            UserStore.dark_mode = false
-        } else {
-            UserStore.dark_mode = true
+        is_loading = true
+        error = ""
+        try {
+            :var result = wait:fetch("/api/users/$id", {
+                method: "GET"
+                headers: {
+                    Authorization: "Bearer $token"
+                    Content-Type: "application/json"
+                }
+            })
+            if result != null {
+                user = result
+            } else {
+                error = "User not found"
+            }
+        } catch (err) {
+            error = err
         }
-    }
-
-    fn toggleNotifications: () => {
-        if UserStore.notifications_enabled == true {
-            UserStore.notifications_enabled = false
-        } else {
-            UserStore.notifications_enabled = true
-        }
-    }
-
-    fn setVolume: (val: float) => {
-        UserStore.volume = val
+        is_loading = false
     }
 }

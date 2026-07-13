@@ -32,6 +32,9 @@ pub use validation::{check_validations, check_validations_with_plugins,
                      ValidationSchema, ValidationRule, is_builtin_validator,
                      BUILTIN_VALIDATORS};
 
+pub mod icon_generator;
+pub use icon_generator::{validate_icon_source, generate_ios_icons, generate_android_icons};
+
 // ─── CompilationResult ───────────────────────────────────────────────────────
 
 /// A single compiled output file.
@@ -170,6 +173,8 @@ mod tests {
     fn compile_result_has_output_files_on_success() {
         use std::fs;
         let dir = std::env::temp_dir().join("frame_compile_test");
+        // Always start fresh — delete any stale directory from a previous run
+        fs::remove_dir_all(&dir).ok();
         let src = dir.join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -178,13 +183,15 @@ mod tests {
         ).unwrap();
         fs::write(
             src.join("project.fr"),
-            "page: {\n  name: \"Home\"\n  route: \"/\"\n}\n",
+            ":app {\n    default_route: \"/\"\n}\n\npage: {\n  name: \"Home\"\n  route: \"/\"\n}\n",
         ).unwrap();
 
         let result = compile(&dir.to_string_lossy());
+        // Debug: print errors if any
+        for e in &result.errors { eprintln!("compile error: {e}"); }
         // Should produce output files even for a minimal project
         assert!(result.errors.is_empty() || !result.output_files.is_empty(),
-            "Either no errors or output files produced");
+            "Either no errors or output files produced. Errors: {:?}", result.errors.iter().map(|e| &e.message).collect::<Vec<_>>());
         fs::remove_dir_all(&dir).ok();
     }
 }

@@ -79,6 +79,9 @@ pub fn resolve(ast: AST, project_root: &Path) -> Result<AST, Vec<FrameError>> {
     let config = load_frame_config(project_root);
     let mut errors = Vec::new();
 
+    // 0. Validate :app {} block — required in project.fr
+    check_app_block(&ast, &mut errors);
+
     // 1. Validate imports
     check_imports(&ast, &mut errors, project_root, &config);
 
@@ -89,6 +92,82 @@ pub fn resolve(ast: AST, project_root: &Path) -> Result<AST, Vec<FrameError>> {
         Ok(ast)
     } else {
         Err(errors)
+    }
+}
+
+/// Validate that the project has a :app {} block with a default_route.
+/// This is required in every project.fr — without it the app has no entry point.
+/// Skipped for minimal/test ASTs that have no pages.
+fn check_app_block(ast: &AST, errors: &mut Vec<FrameError>) {
+    // Skip for empty/test ASTs — only enforce when pages are declared
+    if ast.pages.is_empty() {
+        return;
+    }
+
+    // :app {} not declared at all
+    if ast.default_route.is_none() && ast.on_launch.is_none()
+        && ast.on_foreground.is_none() && ast.on_background.is_none()
+    {
+        errors.push(FrameError {
+            category: ErrorCategory::ParseError,
+            file: "src/project.fr".to_string(),
+            line: 0,
+            column: 0,
+            message: concat!(
+                "Missing required :app {} block in project.fr.\n",
+                "\n",
+                "  Every Frame project must declare :app {} with a default_route.\n",
+                "  Add this to src/project.fr:\n",
+                "\n",
+                "    :app {\n",
+                "        default_route: \"/\"      // route of the first screen\n",
+                "        on_launch:     appInit  // optional\n",
+                "    }\n",
+                "\n",
+                "  The default_route must match the route of one of your page: declarations."
+            ).to_string(),
+        });
+        return;
+    }
+
+    // :app {} declared but default_route missing
+    if ast.default_route.is_none() {
+        errors.push(FrameError {
+            category: ErrorCategory::ParseError,
+            file: "src/project.fr".to_string(),
+            line: 0,
+            column: 0,
+            message: concat!(
+                "Missing required default_route in :app {} block.\n",
+                "\n",
+                "  Add default_route to your :app {} block in src/project.fr:\n",
+                "\n",
+                "    :app {\n",
+                "        default_route: \"/\"      // route of the first screen\n",
+                "    }\n",
+                "\n",
+                "  The default_route must match the route of one of your page: declarations."
+            ).to_string(),
+        });
+        return;
+    }
+
+    // default_route declared — verify it matches an existing page route
+    let declared = ast.default_route.as_deref().unwrap_or("/");
+    let route_exists = ast.pages.iter().any(|p| p.route == declared);
+    if !route_exists {
+        let known: Vec<&str> = ast.pages.iter().map(|p| p.route.as_str()).collect();
+        errors.push(FrameError {
+            category: ErrorCategory::ParseError,
+            file: "src/project.fr".to_string(),
+            line: 0,
+            column: 0,
+            message: format!(
+                "default_route \"{}\" does not match any declared page route.\n\nKnown routes: {}\n\nUpdate default_route in :app {{}} to one of these.",
+                declared,
+                known.join(", ")
+            ),
+        });
     }
 }
 

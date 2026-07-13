@@ -719,4 +719,8 @@ pub struct AST {
     pub on_launch: Option<String>,
     pub on_foreground: Option<String>,
     pub on_background: Option<String>,
+    /// The initial route shown on app launch — declared as `default_route:` in `:app {}`.
+    /// REQUIRED in project.fr. Used as `startDestination` in Android NavHost and
+    /// as the root ViewController in iOS.
+    pub default_route: Option<String>,
 }
